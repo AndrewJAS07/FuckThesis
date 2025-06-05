@@ -2,17 +2,31 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, Text, SafeAreaView, Platform, StatusBar, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Link, useRouter, useLocalSearchParams } from 'expo-router';
-import MapView, { Marker, PROVIDER_GOOGLE, Polyline } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { PathFinder, Point } from '../utils/pathfinding';
 import { rideAPI } from '../lib/api';
+import { MaterialIcons } from '@expo/vector-icons';
 
-interface Location {
-  latitude: number;
-  longitude: number;
-  accuracy?: number | null;
-  timestamp?: number;
+interface Location extends Point {
+  name?: string;
   address?: string;
+  heading?: number;
+  instruction?: string;
+  distance?: number;
+  timestamp?: number;
+  accuracy?: number | null;
+}
+
+interface SearchResult {
+  lat: number;
+  lon: number;
+  display_name: string;
+}
+
+interface TurnInfo {
+  instruction: string;
+  distance: number;
 }
 
 // Naga City boundaries
@@ -76,12 +90,21 @@ export default function LocationCommuter() {
     longitudeDelta: 0.0421,
   });
   const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [pathCoordinates, setPathCoordinates] = useState<{ latitude: number; longitude: number }[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [pathCoordinates, setPathCoordinates] = useState<Point[]>([]);
   const [lastLocationUpdate, setLastLocationUpdate] = useState<number>(0);
   const LOCATION_UPDATE_INTERVAL = 5000; // 5 seconds
   const [isBooking, setIsBooking] = useState(false);
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
+  const [isRiderView, setIsRiderView] = useState(false);
+  const [mapStyle, setMapStyle] = useState('standard');
+  const [showTraffic, setShowTraffic] = useState(false);
+  const [navigationMode, setNavigationMode] = useState<'follow' | 'overview'>('follow');
+  const [nextTurn, setNextTurn] = useState<TurnInfo | null>(null);
+  const [remainingDistance, setRemainingDistance] = useState<number>(0);
+  const [estimatedTime, setEstimatedTime] = useState<number>(0);
+  const [fare, setFare] = useState<number>(0);
+  const [totalDistance, setTotalDistance] = useState<number>(0);
 
   // Add cache cleaning function
   const cleanCache = () => {
@@ -158,175 +181,41 @@ export default function LocationCommuter() {
   }, [currentLocation]);
 
   const handleSearch = async (query: string) => {
-    if (!query.trim()) {
-      setSearchError(null);
-      return;
-    }
-
     try {
-      setSearchError(null);
       setIsLoading(true);
+      setSearchError(null);
 
       // Check cache first
-      const cachedLocation = searchCache[query];
-      if (cachedLocation && typeof cachedLocation.timestamp === 'number') {
-        if (Date.now() - cachedLocation.timestamp < CACHE_EXPIRY) {
-          setDestination(cachedLocation);
-          updateMapRegion(cachedLocation);
-          setIsLoading(false);
-          return;
+      const cachedResult = searchCache[query];
+      if (cachedResult?.timestamp && Date.now() - cachedResult.timestamp < CACHE_EXPIRY) {
+        console.log('Using cached search result');
+        setDestination(cachedResult);
+        updateMapRegion(cachedResult);
+        
+        // Calculate path using road network
+        const nearestCurrentOsmNodeId = pathFinder.findNearestOsmNode(currentLocation, 10000);
+        const nearestDestinationOsmNodeId = pathFinder.findNearestOsmNode(cachedResult, 10000);
+
+        if (!nearestCurrentOsmNodeId || !nearestDestinationOsmNodeId) {
+          throw new Error('Could not find road connections for cached location');
         }
+
+        const pathResult = await calculatePath(nearestCurrentOsmNodeId, nearestDestinationOsmNodeId, cachedResult);
+        setPathCoordinates(pathResult);
+        return;
       }
 
-      let searchData = null;
-      let searchSuccess = false;
-      let searchRetryCount = 0;
-      const maxSearchRetries = 3;
-
-      while (!searchSuccess && searchRetryCount < maxSearchRetries) {
-        try {
-          // Create a timeout promise
-          const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Request timeout')), 5000);
-          });
-
-          // First attempt with strict bounds
-          const searchPromise = fetch(
-            `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&countrycodes=ph&bounded=1&viewbox=${NAGA_CITY_BOUNDS.west},${NAGA_CITY_BOUNDS.north},${NAGA_CITY_BOUNDS.east},${NAGA_CITY_BOUNDS.south}&addressdetails=1`,
-            {
-              headers: {
-                'Accept-Language': 'en',
-                'User-Agent': 'eyytrike-app'
-              }
-            }
-          );
-
-          // Race between the search and timeout
-          const response = await Promise.race([searchPromise, timeoutPromise]) as Response;
-
-          if (!response.ok) {
-            throw new Error(`Network response was not ok: ${response.status}`);
-          }
-
-          searchData = await response.json();
-          
-          // If no results, try a broader search without the viewbox constraint
-          if (!searchData || searchData.length === 0) {
-            const broaderPromise = fetch(
-              `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&countrycodes=ph&addressdetails=1`,
-              {
-                headers: {
-                  'Accept-Language': 'en',
-                  'User-Agent': 'eyytrike-app'
-                }
-              }
-            );
-
-            // Race between the broader search and timeout
-            const broaderResponse = await Promise.race([broaderPromise, timeoutPromise]) as Response;
-            
-            if (broaderResponse.ok) {
-              searchData = await broaderResponse.json();
-            }
-          }
-          
-          searchSuccess = true;
-        } catch (error) {
-          console.warn(`Search request failed (attempt ${searchRetryCount + 1}/${maxSearchRetries}):`, error);
-          searchRetryCount++;
-          
-          if (searchRetryCount === maxSearchRetries) {
-            // If all retries fail, try a fallback search with a different API
-            try {
-              const fallbackTimeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('Request timeout')), 5000);
-              });
-
-              const fallbackPromise = fetch(
-                `https://api.opencagedata.com/geocode/v1/json?q=${encodeURIComponent(query + ', Naga City, Philippines')}&key=YOUR_OPENCAGE_API_KEY&limit=1`
-              );
-
-              // Race between the fallback search and timeout
-              const fallbackResponse = await Promise.race([fallbackPromise, fallbackTimeoutPromise]) as Response;
-              
-              if (fallbackResponse.ok) {
-                const fallbackData = await fallbackResponse.json();
-                if (fallbackData.results && fallbackData.results.length > 0) {
-                  searchData = [{
-                    lat: fallbackData.results[0].geometry.lat.toString(),
-                    lon: fallbackData.results[0].geometry.lng.toString(),
-                    display_name: fallbackData.results[0].formatted
-                  }];
-                  searchSuccess = true;
-                }
-              }
-            } catch (fallbackError) {
-              console.error('Fallback search failed:', fallbackError);
-              throw new Error('Failed to search location after multiple attempts. Please try again.');
-            }
-          }
-          
-          // Wait before retrying
-          await new Promise(resolve => setTimeout(resolve, 1000 * searchRetryCount));
-        }
+      // Perform new search
+      const results = await searchLocation(query);
+      if (!results || results.length === 0) {
+        throw new Error('No results found');
       }
 
-      if (!searchData || searchData.length === 0) {
-        throw new Error('No locations found. Please try a different search term.');
-      }
-
-      // Find the best matching result
-      let bestMatch = null;
-      let bestScore = -1;
-
-      for (const result of searchData) {
-        if (!result || typeof result.lat !== 'string' || typeof result.lon !== 'string') {
-          continue;
-        }
-
-        const lat = parseFloat(result.lat);
-        const lon = parseFloat(result.lon);
-        if (isNaN(lat) || isNaN(lon)) {
-          continue;
-        }
-
-        const location = { latitude: lat, longitude: lon };
-        
-        // Calculate score based on:
-        // 1. Whether it's within Naga City bounds
-        // 2. How well the display name matches the search query
-        // 3. The presence of important address components
-        let score = 0;
-        
-        if (isWithinNagaCity(location)) {
-          score += 3;
-        }
-        
-        const displayName = result.display_name?.toLowerCase() || '';
-        const searchTerms = query.toLowerCase().split(' ');
-        const matchingTerms = searchTerms.filter(term => displayName.includes(term));
-        score += matchingTerms.length;
-        
-        if (result.address) {
-          if (result.address.city === 'Naga') score += 2;
-          if (result.address.state === 'Bicol') score += 1;
-        }
-        
-        if (score > bestScore) {
-          bestScore = score;
-          bestMatch = result;
-        }
-      }
-
-      if (!bestMatch) {
-        throw new Error('No suitable locations found. Please try a different search term.');
-      }
-
-      const newDestination = {
-        latitude: parseFloat(bestMatch.lat),
-        longitude: parseFloat(bestMatch.lon),
-        timestamp: Date.now(),
-        address: bestMatch.display_name || query
+      const newDestination: Location = {
+        latitude: results[0].lat,
+        longitude: results[0].lon,
+        name: results[0].display_name,
+        timestamp: Date.now()
       };
 
       // Cache the result
@@ -335,7 +224,7 @@ export default function LocationCommuter() {
         // Remove oldest entries if cache is too large
         const entries = Object.entries(newCache);
         if (entries.length > MAX_CACHE_SIZE) {
-          const sortedEntries = entries.sort((a, b) => b[1].timestamp - a[1].timestamp);
+          const sortedEntries = entries.sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0));
           return Object.fromEntries(sortedEntries.slice(0, MAX_CACHE_SIZE));
         }
         return newCache;
@@ -354,122 +243,95 @@ export default function LocationCommuter() {
       const nearestDestinationOsmNodeId = pathFinder.findNearestOsmNode(newDestination, 10000);
 
       if (!nearestCurrentOsmNodeId || !nearestDestinationOsmNodeId) {
-        console.warn('Could not find nearest OSM nodes, using direct path');
-        const directPath = createPath(currentLocation, newDestination);
-        setPathCoordinates(directPath);
-      } else {
-        const pathResult = await calculatePath(nearestCurrentOsmNodeId, nearestDestinationOsmNodeId, newDestination);
-        setPathCoordinates(pathResult);
+        throw new Error('Could not find road connections for the destination');
       }
+
+      const pathResult = await calculatePath(nearestCurrentOsmNodeId, nearestDestinationOsmNodeId, newDestination);
+      setPathCoordinates(pathResult);
 
     } catch (error) {
       console.error('Search error:', error);
       setSearchError(error instanceof Error ? error.message : 'Failed to search location');
       setDestination(null);
+      setPathCoordinates([]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const calculatePath = async (startNodeId: string, endNodeId: string, destination: Location) => {
+  // Enhanced path calculation with smoothing
+  const calculatePath = async (startNodeId: string, endNodeId: string, destination: Location): Promise<Point[]> => {
     try {
-      // Calculate direct path first for immediate response
-      const directPath = createPath(currentLocation, destination);
-      setPathCoordinates(directPath);
-
-      // Then try to find a better path using OSM data
-      const centerLat = (currentLocation.latitude + destination.latitude) / 2;
-      const centerLon = (currentLocation.longitude + destination.longitude) / 2;
-      const centerPoint = { latitude: centerLat, longitude: centerLon };
+      setIsLoading(true);
+      const pathResult = pathFinder.findShortestPath(startNodeId, endNodeId);
       
-      // Calculate appropriate radius based on distance
-      const distance = calculateDistance(currentLocation, destination);
-      const radius = Math.min(distance * 0.5, 2000); // Reduced to 2km max for better performance
-
-      console.log('Fetching road network with radius:', radius, 'meters');
-
-      // Fetch road network with retry logic
-      let retryCount = 0;
-      const maxRetries = 2;
-      let success = false;
-
-      while (!success && retryCount < maxRetries) {
-        try {
-          // Create a new PathFinder instance for each attempt to avoid memory issues
-          const newPathFinder = new PathFinder();
-          
-          await newPathFinder.fetchRoadNetwork(centerPoint, radius);
-          success = true;
-          console.log('Road network fetched successfully');
-          
-          // Find nearest OSM nodes with smaller search radius
-          const nearestCurrentOsmNodeId = newPathFinder.findNearestOsmNode(currentLocation, 1000);
-          const nearestDestinationOsmNodeId = newPathFinder.findNearestOsmNode(destination, 1000);
-
-          if (!nearestCurrentOsmNodeId || !nearestDestinationOsmNodeId) {
-            console.warn('Could not find nearest OSM nodes, using direct path');
-            return directPath;
-          }
-
-          // Add current and destination nodes
-          newPathFinder.addNode('current', currentLocation);
-          newPathFinder.addNode('destination', destination);
-          
-          // Add edges with validation
-          if (newPathFinder.getNodes()[nearestCurrentOsmNodeId]) {
-            newPathFinder.addEdge('current', nearestCurrentOsmNodeId);
-          }
-          if (newPathFinder.getNodes()[nearestDestinationOsmNodeId]) {
-            newPathFinder.addEdge('destination', nearestDestinationOsmNodeId);
-          }
-
-          const pathResult = newPathFinder.findShortestPath(nearestCurrentOsmNodeId, nearestDestinationOsmNodeId);
-          
-          if (pathResult && pathResult.path.length > 1) {
-            const fullPathNodeIds = ['current', ...pathResult.path, 'destination'];
-            const pathPoints = fullPathNodeIds.map(nodeId => {
-              if (nodeId === 'current') return currentLocation;
-              if (nodeId === 'destination') return destination;
-              const point = newPathFinder.getPathCoordinates([nodeId])[0];
-              if (!point) {
-                console.warn(`Missing coordinates for node ${nodeId}`);
-                return null;
-              }
-              return point;
-            }).filter(point => point !== null) as Point[];
-
-            // Validate path points
-            if (pathPoints.length < 2) {
-              return directPath;
-            }
-
-            // Validate path continuity
-            for (let i = 0; i < pathPoints.length - 1; i++) {
-              const distance = calculateDistance(pathPoints[i], pathPoints[i + 1]);
-              if (distance > 500) { // Reduced threshold to 500m
-                return directPath;
-              }
-            }
-
-            return pathPoints;
-          }
-        } catch (error) {
-          console.warn(`Failed to fetch road network (attempt ${retryCount + 1}/${maxRetries}):`, error);
-          retryCount++;
-          if (retryCount === maxRetries) {
-            // If we can't get the road network, stick with the direct path
-            return directPath;
-          }
-          // Shorter wait time between retries
-          await new Promise(resolve => setTimeout(resolve, 500 * retryCount));
-        }
+      if (!pathResult) {
+        throw new Error('No path found');
       }
+
+      // Get detailed path coordinates
+      const detailedPath = pathFinder.getDetailedPathCoordinates(pathResult.path);
       
-      return directPath;
+      // Calculate fare and update state
+      const fare = calculateEstimatedFare(currentLocation, destination);
+      setFare(fare);
+      setTotalDistance(pathResult.distance);
+      setEstimatedTime(pathResult.estimatedTime);
+
+      // Update path coordinates
+      setPathCoordinates(detailedPath);
+
+      // Animate map to show the entire path
+      if (mapRef.current && detailedPath.length > 0) {
+        const coordinates = detailedPath.map(point => ({
+          latitude: point.latitude,
+          longitude: point.longitude
+        }));
+
+        mapRef.current.fitToCoordinates(coordinates, {
+          edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+          animated: true
+        });
+      }
+
+      return detailedPath;
     } catch (error) {
       console.error('Error calculating path:', error);
-      return createPath(currentLocation, destination);
+      setSearchError('Failed to calculate route. Please try again.');
+      return [];
+    } finally {
+      setIsLoading(false);
     }
+  };
+
+  // Enhanced path smoothing
+  const smoothPath = (points: Point[]): Point[] => {
+    if (points.length <= 2) return points;
+
+    const smoothed: Point[] = [points[0]];
+    let currentIndex = 0;
+
+    while (currentIndex < points.length - 1) {
+      let furthestVisible = currentIndex + 1;
+      
+      // Look ahead to find the furthest visible point
+      for (let i = currentIndex + 2; i < points.length; i++) {
+        if (isLineOfSight(points[currentIndex], points[i])) {
+          furthestVisible = i;
+        }
+      }
+
+      smoothed.push(points[furthestVisible]);
+      currentIndex = furthestVisible;
+    }
+
+    return smoothed;
+  };
+
+  // Check if there's a direct line of sight between two points
+  const isLineOfSight = (point1: Point, point2: Point): boolean => {
+    const distance = calculateDistance(point1, point2);
+    return distance < 100; // 100 meters threshold
   };
 
   const updateMapRegion = (newDestination: Location) => {
@@ -611,8 +473,8 @@ export default function LocationCommuter() {
         pathname: "/(commuter)/booking",
         params: {
           rideId: rideResponse.id,
-          pickupLat: currentLocation.latitude.toString(),
-          pickupLng: currentLocation.longitude.toString(),
+          pickupLat: currentLocation.longitude.toString(),
+          pickupLng: currentLocation.latitude.toString(),
           destLat: destination.latitude.toString(),
           destLng: destination.longitude.toString(),
           destAddress: destination.address || searchText,
@@ -732,6 +594,169 @@ export default function LocationCommuter() {
     };
   }, []);
 
+  // Function to search for locations using Nominatim API
+  const searchLocation = async (query: string): Promise<SearchResult[]> => {
+    try {
+      if (!query.trim()) {
+        return [];
+      }
+
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+          query
+        )}&countrycodes=ph&limit=5`,
+        {
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'EyyRideSharing/1.0', // Required by Nominatim usage policy
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Invalid response format from Nominatim API');
+      }
+
+      const data = await response.json();
+      
+      if (!Array.isArray(data)) {
+        throw new Error('Invalid response format from Nominatim API');
+      }
+
+      return data.map((item: any) => ({
+        lat: parseFloat(item.lat),
+        lon: parseFloat(item.lon),
+        display_name: item.display_name
+      }));
+    } catch (error) {
+      console.error('Error searching location:', error);
+      setSearchError('Failed to search location. Please try again.');
+      throw error;
+    }
+  };
+
+  // Function to calculate next turn information
+  const calculateNextTurn = (path: Point[], currentIndex: number): TurnInfo | null => {
+    if (currentIndex >= path.length - 2) {
+      return null;
+    }
+
+    const current = path[currentIndex];
+    const next = path[currentIndex + 1];
+    const nextNext = path[currentIndex + 2];
+
+    // Calculate bearing between points
+    const bearing1 = calculateBearing(current, next);
+    const bearing2 = calculateBearing(next, nextNext);
+    const angleDiff = (bearing2 - bearing1 + 360) % 360;
+
+    // Calculate distance to next turn
+    const distance = calculateDistance(current, next);
+
+    // Determine turn instruction
+    let instruction = 'Continue straight';
+    if (angleDiff > 30 && angleDiff <= 150) {
+      instruction = 'Turn right';
+    } else if (angleDiff > 150 && angleDiff <= 210) {
+      instruction = 'Turn around';
+    } else if (angleDiff > 210 && angleDiff <= 330) {
+      instruction = 'Turn left';
+    }
+
+    return {
+      instruction,
+      distance
+    };
+  };
+
+  // Function to calculate bearing between two points
+  const calculateBearing = (start: Point, end: Point): number => {
+    const startLat = start.latitude * Math.PI / 180;
+    const startLng = start.longitude * Math.PI / 180;
+    const endLat = end.latitude * Math.PI / 180;
+    const endLng = end.longitude * Math.PI / 180;
+
+    const y = Math.sin(endLng - startLng) * Math.cos(endLat);
+    const x = Math.cos(startLat) * Math.sin(endLat) -
+              Math.sin(startLat) * Math.cos(endLat) * Math.cos(endLng - startLng);
+    
+    let bearing = Math.atan2(y, x) * 180 / Math.PI;
+    bearing = (bearing + 360) % 360;
+    
+    return bearing;
+  };
+
+  // Function to handle map style change
+  const handleMapStyleChange = (style: string) => {
+    setMapStyle(style);
+  };
+
+  // Function to toggle rider's view
+  const toggleRiderView = () => {
+    setIsRiderView(!isRiderView);
+    if (!isRiderView) {
+      // When switching to rider view, adjust the map to follow the rider
+      mapRef.current?.animateToRegion({
+        latitude: currentLocation.latitude,
+        longitude: currentLocation.longitude,
+        latitudeDelta: 0.005, // Closer zoom for rider view
+        longitudeDelta: 0.005,
+      }, 1000);
+    }
+  };
+
+  // Function to update rider's heading
+  const updateRiderHeading = (heading: number) => {
+    setCurrentLocation(prev => ({
+      ...prev,
+      heading
+    }));
+  };
+
+  // Function to find closest point on path
+  const findClosestPointIndex = (point: Point, path: Point[]): number => {
+    let minDistance = Infinity;
+    let closestIndex = 0;
+
+    for (let i = 0; i < path.length; i++) {
+      const distance = calculateDistance(point, path[i]);
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestIndex = i;
+      }
+    }
+
+    return closestIndex;
+  };
+
+  // Update location tracking to include navigation updates
+  useEffect(() => {
+    if (isRiderView && pathCoordinates.length > 0) {
+      // Find closest point on path
+      const currentIndex = findClosestPointIndex(currentLocation, pathCoordinates);
+      
+      // Calculate next turn
+      const turnInfo = calculateNextTurn(pathCoordinates, currentIndex);
+      setNextTurn(turnInfo);
+
+      // Calculate remaining distance
+      let remainingDist = 0;
+      for (let i = currentIndex; i < pathCoordinates.length - 1; i++) {
+        remainingDist += calculateDistance(pathCoordinates[i], pathCoordinates[i + 1]);
+      }
+      setRemainingDistance(remainingDist);
+
+      // Estimate time (assuming average speed of 15 km/h)
+      const estimatedTimeMinutes = (remainingDist / 1000) / 15 * 60;
+      setEstimatedTime(estimatedTimeMinutes);
+    }
+  }, [currentLocation, isRiderView, pathCoordinates]);
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -766,104 +791,72 @@ export default function LocationCommuter() {
       <View style={styles.mapContainer}>
         <MapView
           ref={mapRef}
-          provider={PROVIDER_GOOGLE}
           style={styles.map}
-          region={region}
-          onRegionChangeComplete={(newRegion) => {
-            const center = {
-              latitude: newRegion.latitude,
-              longitude: newRegion.longitude,
-            };
-            if (!isWithinNagaCity(center)) {
-              mapRef.current?.animateToRegion(region, 300);
-            } else {
-              setRegion(newRegion);
-            }
-          }}
-          showsUserLocation={true}
-          showsMyLocationButton={true}
-          showsCompass={true}
-          showsScale={true}
-          minZoomLevel={ZOOM_LEVELS.CITY_OVERVIEW}
-          maxZoomLevel={18}
-          followsUserLocation={true}
-          moveOnMarkerPress={false}
+          provider={PROVIDER_DEFAULT}
+          showsUserLocation
+          showsMyLocationButton
+          showsCompass
+          showsScale
+          showsTraffic={showTraffic}
+          mapType={mapStyle === 'satellite' ? 'satellite' : 'standard'}
+          initialRegion={region}
+          onRegionChangeComplete={setRegion}
         >
           {/* Current Location Marker */}
           <Marker
-            coordinate={currentLocation}
-            title="Your Location"
-            description={locationAccuracy ? 
-              `Accuracy: ${Math.round(locationAccuracy)}m` : 
-              undefined
-            }
+            coordinate={{
+              latitude: currentLocation.latitude,
+              longitude: currentLocation.longitude
+            }}
             anchor={{ x: 0.5, y: 0.5 }}
+            rotation={currentLocation.heading || 0}
           >
             <View style={styles.currentLocationMarker}>
-              <Ionicons 
-                name="location" 
-                size={30} 
-                color="#0d4217"
-              />
+              <Ionicons name="location" size={24} color="#0d4217" />
             </View>
           </Marker>
 
           {/* Destination Marker */}
           {destination && (
             <Marker
-              coordinate={destination}
-              title="Destination"
+              coordinate={{
+                latitude: destination.latitude,
+                longitude: destination.longitude
+              }}
+              anchor={{ x: 0.5, y: 1.0 }}
             >
               <View style={styles.destinationMarker}>
-                <Ionicons name="flag" size={30} color="#FF0000" />
+                <Ionicons name="flag" size={24} color="#e74c3c" />
               </View>
             </Marker>
           )}
 
-          {/* Path Line */}
+          {/* Path Polyline */}
           {pathCoordinates.length > 0 && (
             <Polyline
               coordinates={pathCoordinates}
-              strokeColor="#0d4217"
               strokeWidth={4}
+              strokeColor="#0d4217"
               lineDashPattern={[1]}
               zIndex={1}
-              lineCap="round"
-              lineJoin="round"
+              tappable={false}
+              geodesic={true}
             />
           )}
         </MapView>
 
-        {/* Loading Indicator */}
-        {isLoading && (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#0d4217" />
-            <Text style={styles.loadingText}>Finding location...</Text>
+        {/* Navigation Info */}
+        {isRiderView && nextTurn && (
+          <View style={styles.navigationInfo}>
+            <Text style={styles.turnInstruction}>{nextTurn.instruction}</Text>
+            <Text style={styles.distanceInfo}>
+              {Math.round(nextTurn.distance)}m • {Math.round(remainingDistance)}m remaining
+            </Text>
+            <Text style={styles.timeInfo}>
+              Est. arrival: {Math.round(estimatedTime)} min
+            </Text>
           </View>
         )}
-
-        {/* Recenter Button */}
-        <TouchableOpacity 
-          style={styles.recenterButton}
-          onPress={() => {
-            if (currentLocation) {
-              const newRegion = {
-                latitude: currentLocation.latitude,
-                longitude: currentLocation.longitude,
-                latitudeDelta: 0.002,
-                longitudeDelta: 0.002,
-              };
-              setRegion(newRegion);
-              mapRef.current?.animateToRegion(newRegion, 300);
-            }
-          }}
-        >
-          <Ionicons 
-            name="locate" 
-            size={24} 
-            color="#0d4217"
-          />
-        </TouchableOpacity>
       </View>
 
       {/* Choose Button */}
@@ -894,6 +887,44 @@ export default function LocationCommuter() {
         <Link href="/profilecommuter" style={[styles.navItem, styles.inactiveNavItem]}>
           <Ionicons name="person" size={24} color="#004D00" style={styles.inactiveIcon} />
         </Link>
+      </View>
+
+      {/* Rider controls overlay */}
+      <View style={styles.controlsOverlay}>
+        <View style={styles.mapControls}>
+          <TouchableOpacity
+            style={[styles.controlButton, isRiderView && styles.activeControlButton]}
+            onPress={toggleRiderView}
+          >
+            <MaterialIcons
+              name={isRiderView ? "directions-bike" : "map"}
+              size={24}
+              color={isRiderView ? "#FFFFFF" : "#000000"}
+            />
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.controlButton, mapStyle === 'satellite' && styles.activeControlButton]}
+            onPress={() => handleMapStyleChange(mapStyle === 'satellite' ? 'standard' : 'satellite')}
+          >
+            <MaterialIcons
+              name={mapStyle === 'satellite' ? "terrain" : "satellite"}
+              size={24}
+              color={mapStyle === 'satellite' ? "#FFFFFF" : "#000000"}
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.controlButton, showTraffic && styles.activeControlButton]}
+            onPress={() => setShowTraffic(!showTraffic)}
+          >
+            <MaterialIcons
+              name="traffic"
+              size={24}
+              color={showTraffic ? "#FFFFFF" : "#000000"}
+            />
+          </TouchableOpacity>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -940,15 +971,18 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   currentLocationMarker: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    backgroundColor: 'white',
     borderRadius: 20,
     padding: 4,
+    borderWidth: 2,
+    borderColor: '#0d4217'
   },
   destinationMarker: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 4,
+    borderWidth: 2,
+    borderColor: '#e74c3c'
   },
   recenterButton: {
     position: 'absolute',
@@ -1035,5 +1069,59 @@ const styles = StyleSheet.create({
   errorText: {
     color: '#c62828',
     fontSize: 14,
+  },
+  controlsOverlay: {
+    position: 'absolute',
+    top: 20,
+    right: 20,
+    zIndex: 1,
+  },
+  mapControls: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 8,
+    padding: 8,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  controlButton: {
+    padding: 8,
+    marginVertical: 4,
+    borderRadius: 4,
+    backgroundColor: '#FFFFFF',
+  },
+  activeControlButton: {
+    backgroundColor: '#2196F3',
+  },
+  navigationInfo: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    right: 20,
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5
+  },
+  turnInstruction: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#0d4217',
+    marginBottom: 5
+  },
+  distanceInfo: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 3
+  },
+  timeInfo: {
+    fontSize: 14,
+    color: '#666'
   },
 }); 
