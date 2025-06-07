@@ -118,7 +118,7 @@ export default function DashboardCommuter() {
       {/* Book Button */}
       <TouchableOpacity 
         style={styles.bookButton}
-        onPress={() => router.push('/bookingcommuter')}
+        onPress={() => router.push('/locationcommuter')}
       >
         <Text style={styles.bookButtonText}>Book eyytrike</Text>
       </TouchableOpacity>

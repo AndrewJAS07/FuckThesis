@@ -4,7 +4,7 @@ import { AntDesign } from '@expo/vector-icons';
 import { useState } from 'react';
 import { authAPI, UserData } from '../lib/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from '../lib/api'; // Import the default export (axios instance)
+import api, { API_URL } from '../lib/api';
 
 export default function RiderSignUpScreen() {
   const router = useRouter();
@@ -14,9 +14,9 @@ export default function RiderSignUpScreen() {
     fullName: '',
     email: '',
     phoneNumber: '',
-    licenseNumber: '',
     password: '',
     confirmPassword: '',
+    licenseNumber: '',
   });
 
   const handleInputChange = (field: string, value: string) => {
@@ -25,7 +25,8 @@ export default function RiderSignUpScreen() {
 
   const handleSignUp = async () => {
     // Validate form
-    if (!formData.fullName || !formData.email || !formData.phoneNumber || !formData.licenseNumber || !formData.password || !formData.confirmPassword) {
+    if (!formData.fullName || !formData.email || !formData.phoneNumber || 
+        !formData.password || !formData.confirmPassword || !formData.licenseNumber) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
@@ -51,7 +52,7 @@ export default function RiderSignUpScreen() {
         role: 'driver'
       };
 
-      console.log('Attempting signup with URL:', api.baseURL + '/api/auth/register', 'and data:', userData);
+      console.log('Attempting signup with URL:', API_URL + '/api/auth/register', 'and data:', userData);
       const response = await authAPI.register(userData);
 
       // Store the token and user data
@@ -83,10 +84,8 @@ export default function RiderSignUpScreen() {
         <View style={styles.headerContainer}>
           {/* Title */}
           <View style={styles.titleContainer}>
-            <Text style={styles.title}>Let's</Text>
-            <Text style={styles.titleBold}>Create</Text>
-            <Text style={styles.titleBold}>Your</Text>
-            <Text style={styles.titleBold}>Account</Text>
+            <Text style={styles.title}>Become a</Text>
+            <Text style={styles.titleBold}>Rider</Text>
           </View>
 
           {/* Close Button */}
@@ -141,7 +140,7 @@ export default function RiderSignUpScreen() {
           <AntDesign name="idcard" size={20} color="#666666" style={styles.inputIcon} />
           <TextInput
             style={styles.input}
-            placeholder="Driver's License number"
+            placeholder="License Number"
             placeholderTextColor="#666666"
             value={formData.licenseNumber}
             onChangeText={(value) => handleInputChange('licenseNumber', value)}
@@ -194,7 +193,7 @@ export default function RiderSignUpScreen() {
           {isLoading ? (
             <ActivityIndicator color="#ffffff" />
           ) : (
-            <Text style={styles.signUpButtonText}>Sign Up</Text>
+            <Text style={styles.signUpButtonText}>Sign Up as Rider</Text>
           )}
         </TouchableOpacity>
 

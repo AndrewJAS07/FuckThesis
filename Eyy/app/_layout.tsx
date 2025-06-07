@@ -27,7 +27,6 @@ function RootLayout() {
             <Stack.Screen name="index" />
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="(commuter)" />
             <Stack.Screen name="logincommuter" />
             <Stack.Screen name="loginrider" />
             <Stack.Screen name="signupcommuter" />

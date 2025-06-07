@@ -4,7 +4,7 @@ import { AntDesign } from '@expo/vector-icons';
 import { useState } from 'react';
 import { authAPI, UserData } from '../lib/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from '../lib/api'; // Import the default export (axios instance)
+import api, { API_URL } from '../lib/api'; // Import API_URL
 
 export default function CommuterSignUpScreen() {
   const router = useRouter();
@@ -49,7 +49,7 @@ export default function CommuterSignUpScreen() {
         role: 'commuter'
       };
 
-      console.log('Attempting signup with URL:', api.baseURL + '/api/auth/register', 'and data:', userData);
+      console.log('Attempting signup with URL:', API_URL + '/api/auth/register', 'and data:', userData);
       const response = await authAPI.register(userData);
 
       // Store the token and user data

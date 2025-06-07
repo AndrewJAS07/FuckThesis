@@ -1,12 +1,27 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, Text, SafeAreaView, Platform, StatusBar, TouchableOpacity, Image, Switch, ScrollView } from 'react-native';
+import { View, StyleSheet, Text, SafeAreaView, Platform, StatusBar, TouchableOpacity, Image, Switch, ScrollView, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { authAPI } from '../lib/api';
 
 export default function MenuRider() {
   const router = useRouter();
   const [silentMode, setSilentMode] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleSignOut = async () => {
+    try {
+      setIsLoggingOut(true);
+      await authAPI.logout();
+      router.replace('/');
+    } catch (error) {
+      console.error('Logout error:', error);
+      Alert.alert('Error', 'Failed to sign out. Please try again.');
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -135,11 +150,14 @@ export default function MenuRider() {
           {/* Sign Out Section */}
           <View style={styles.signOutSection}>
             <TouchableOpacity 
-              style={styles.signOutButton}
-              onPress={() => router.replace('/')}
+              style={[styles.signOutButton, isLoggingOut && styles.signOutButtonDisabled]}
+              onPress={handleSignOut}
+              disabled={isLoggingOut}
             >
               <Ionicons name="log-out" size={20} color="#fff" />
-              <Text style={styles.signOutText}>Sign Out</Text>
+              <Text style={styles.signOutText}>
+                {isLoggingOut ? 'Signing Out...' : 'Sign Out'}
+              </Text>
             </TouchableOpacity>
             <Text style={styles.privacyText}>Privacy & Policy</Text>
           </View>
@@ -239,11 +257,18 @@ const styles = StyleSheet.create({
   signOutButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#FF3B30',
+  },
+  signOutButtonDisabled: {
+    opacity: 0.7,
   },
   signOutText: {
     color: '#fff',
     fontSize: 16,
     marginLeft: 12,
+    fontWeight: 'bold',
   },
   privacyText: {
     color: '#ffffff80',
