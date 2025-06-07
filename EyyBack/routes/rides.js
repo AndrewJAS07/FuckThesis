@@ -9,15 +9,20 @@ router.post('/', auth, async (req, res) => {
   try {
     const ride = new Ride({
       ...req.body,
-      passenger: req.user._id
+      passenger: req.user._id,
     });
     await ride.save();
-    
-    // Notify available drivers
-    req.app.get('io').emit('newRideRequest', ride);
-    
+
+    const io = req.app.get('io');
+    if (io && typeof io.emit === 'function') {
+      io.emit('newRideRequest', ride);
+    } else {
+      console.warn('⚠️ io or io.emit not available. Skipping emit.');
+    }
+
     res.status(201).json(ride);
   } catch (error) {
+    console.error('❌ Ride creation failed:', error.message);
     res.status(400).json({ error: error.message });
   }
 });
@@ -26,22 +31,19 @@ router.post('/', auth, async (req, res) => {
 router.get('/my-rides', auth, async (req, res) => {
   try {
     const rides = await Ride.find({
-      $or: [
-        { passenger: req.user._id },
-        { driver: req.user._id }
-      ]
+      $or: [{ passenger: req.user._id }, { driver: req.user._id }]
     })
-    .populate('passenger', 'name phone')
-    .populate('driver', 'name phone')
-    .sort({ createdAt: -1 });
-    
+      .populate('passenger', 'name phone')
+      .populate('driver', 'name phone')
+      .sort({ createdAt: -1 });
+
     res.json(rides);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
 
-// Get nearby ride requests (for drivers)
+// Nearby rides (for drivers)
 router.get('/nearby', auth, async (req, res) => {
   try {
     if (req.user.role !== 'driver') {
@@ -49,27 +51,27 @@ router.get('/nearby', auth, async (req, res) => {
     }
 
     const { latitude, longitude, maxDistance = 5000 } = req.query;
-    
+
     const rides = await Ride.find({
       status: 'pending',
       pickupLocation: {
         $near: {
           $geometry: {
             type: 'Point',
-            coordinates: [parseFloat(longitude), parseFloat(latitude)]
+            coordinates: [parseFloat(longitude), parseFloat(latitude)],
           },
-          $maxDistance: parseInt(maxDistance)
+          $maxDistance: parseInt(maxDistance),
         }
       }
     }).populate('passenger', 'name phone');
-    
+
     res.json(rides);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
 
-// Accept ride request
+// Accept ride
 router.patch('/:id/accept', auth, async (req, res) => {
   try {
     if (req.user.role !== 'driver') {
@@ -77,22 +79,18 @@ router.patch('/:id/accept', auth, async (req, res) => {
     }
 
     const ride = await Ride.findById(req.params.id);
-    
-    if (!ride) {
-      return res.status(404).json({ error: 'Ride not found' });
-    }
-
-    if (ride.status !== 'pending') {
-      return res.status(400).json({ error: 'Ride is no longer available' });
-    }
+    if (!ride) return res.status(404).json({ error: 'Ride not found' });
+    if (ride.status !== 'pending') return res.status(400).json({ error: 'Ride already accepted' });
 
     ride.driver = req.user._id;
     ride.status = 'accepted';
     await ride.save();
 
-    // Notify passenger
-    req.app.get('io').to(`user_${ride.passenger}`).emit('rideAccepted', ride);
-    
+    const io = req.app.get('io');
+    if (io && typeof io.to === 'function') {
+      io.to(`user_${ride.passenger}`).emit('rideAccepted', ride);
+    }
+
     res.json(ride);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -103,39 +101,37 @@ router.patch('/:id/accept', auth, async (req, res) => {
 router.patch('/:id/status', auth, async (req, res) => {
   try {
     const ride = await Ride.findById(req.params.id);
-    
-    if (!ride) {
-      return res.status(404).json({ error: 'Ride not found' });
-    }
+    if (!ride) return res.status(404).json({ error: 'Ride not found' });
 
-    if (req.user._id.toString() !== ride.driver.toString() && 
-        req.user._id.toString() !== ride.passenger.toString()) {
-      return res.status(403).json({ error: 'Not authorized to update this ride' });
+    if (
+      req.user._id.toString() !== ride.driver?.toString() &&
+      req.user._id.toString() !== ride.passenger?.toString()
+    ) {
+      return res.status(403).json({ error: 'Not authorized' });
     }
 
     ride.status = req.body.status;
     await ride.save();
 
-    // Notify all parties involved
-    req.app.get('io').to(`ride_${ride._id}`).emit('rideStatusChanged', ride);
-    
+    const io = req.app.get('io');
+    if (io && typeof io.to === 'function') {
+      io.to(`ride_${ride._id}`).emit('rideStatusChanged', ride);
+    }
+
     res.json(ride);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
 
-// Rate ride
+// Rate a ride
 router.post('/:id/rate', auth, async (req, res) => {
   try {
     const ride = await Ride.findById(req.params.id);
-    
-    if (!ride) {
-      return res.status(404).json({ error: 'Ride not found' });
-    }
+    if (!ride) return res.status(404).json({ error: 'Ride not found' });
 
     if (ride.status !== 'completed') {
-      return res.status(400).json({ error: 'Can only rate completed rides' });
+      return res.status(400).json({ error: 'Ride not completed' });
     }
 
     if (req.user._id.toString() !== ride.passenger.toString()) {
@@ -146,12 +142,11 @@ router.post('/:id/rate', auth, async (req, res) => {
     ride.feedback = req.body.feedback;
     await ride.save();
 
-    // Update driver's average rating
     const driver = await User.findById(ride.driver);
     const driverRides = await Ride.find({ driver: ride.driver, rating: { $exists: true } });
-    const averageRating = driverRides.reduce((acc, ride) => acc + ride.rating, 0) / driverRides.length;
-    
-    driver.rating = averageRating;
+    const avg = driverRides.reduce((acc, r) => acc + r.rating, 0) / driverRides.length;
+
+    driver.rating = avg;
     await driver.save();
 
     res.json(ride);
@@ -160,4 +155,4 @@ router.post('/:id/rate', auth, async (req, res) => {
   }
 });
 
-module.exports = router; 
+module.exports = router;
