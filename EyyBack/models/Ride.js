@@ -14,7 +14,7 @@ const rideSchema = new mongoose.Schema({
     type: {
       type: String,
       enum: ['Point'],
-      default: 'Point'
+      required: true
     },
     coordinates: {
       type: [Number],
@@ -95,6 +95,14 @@ const rideSchema = new mongoose.Schema({
   timestamps: true
 });
 
+rideSchema.set('toJSON', {
+  virtuals: true,
+  versionKey: false,
+  transform: (doc, ret) => {
+    ret.id = ret._id;
+    delete ret._id;
+  }
+});
 // Create indexes for location queries
 rideSchema.index({ pickupLocation: '2dsphere' });
 rideSchema.index({ dropoffLocation: '2dsphere' });

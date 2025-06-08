@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Use the user's local IP address as the primary server URL.
 // Fallback to Constants.expoConfig?.extra?.serverUrl if the IP is not available (less likely).
-const USER_LOCAL_IP = 'http://192.168.170.20:3000';
+const USER_LOCAL_IP = 'http://192.168.1.25:3000';
 const API_URL = USER_LOCAL_IP || Constants.expoConfig?.extra?.serverUrl;
 
 // Ensure API_URL is set, otherwise throw an error
@@ -158,6 +158,7 @@ const rideAPI = {
       coordinates: [number, number];
       address: string;
     };
+
     fare: number;
     distance: number;
     duration: number;

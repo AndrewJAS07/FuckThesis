@@ -18,7 +18,7 @@ router.post('/', auth, async (req, res) => {
     
     res.status(201).json(ride);
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error('🚨 Ride creation error:', error); // ✅ See what happened
   }
 });
 
