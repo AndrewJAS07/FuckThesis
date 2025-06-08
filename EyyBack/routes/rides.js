@@ -7,6 +7,19 @@ const auth = require('../middleware/auth');
 // Create new ride request
 router.post('/', auth, async (req, res) => {
   try {
+    // Prevent duplicate active rides
+    const existing = await Ride.findOne({
+      passenger: req.user._id,
+      status: { $in: ['pending', 'accepted'] },
+    });
+
+    if (existing) {
+      return res.status(400).json({
+        error: 'You already have an active ride request.',
+        rideId: existing._id,
+      });
+    }
+
     const ride = new Ride({
       ...req.body,
       passenger: req.user._id,
