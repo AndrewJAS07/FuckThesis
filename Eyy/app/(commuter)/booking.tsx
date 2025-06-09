@@ -60,16 +60,33 @@ const BookingScreen: React.FC = () => {
   const createRide = async (data: BookingData) => {
     try {
       setIsLoading(true);
+      // const response = await rideAPI.createRide({
+      //   pickup: {
+      //     latitude: data.pickup.latitude,
+      //     longitude: data.pickup.longitude
+      //   },
+      //   destination: {
+      //     latitude: data.destination.latitude,
+      //     longitude: data.destination.longitude
+      //   },
+      //   fare: data.estimatedFare
+      // });
       const response = await rideAPI.createRide({
-        pickup: {
-          latitude: data.pickup.latitude,
-          longitude: data.pickup.longitude
+        pickupLocation: {
+          type: 'Point',
+          coordinates: [data.pickup.longitude, data.pickup.latitude],
+          address: data.pickup.address,
         },
-        destination: {
-          latitude: data.destination.latitude,
-          longitude: data.destination.longitude
+        dropoffLocation: {
+          type: 'Point',
+          coordinates: [data.destination.longitude, data.destination.latitude],
+          address: data.destination.address,
         },
-        fare: data.estimatedFare
+        fare: data.estimatedFare,
+        distance: data.distance,
+        duration: 0, // You can calculate this based on your logic
+        paymentMethod: 'cash', // or whatever payment method you want to use
+        status: data.status,
       });
       setRideId(response.id);
       setError(null);
