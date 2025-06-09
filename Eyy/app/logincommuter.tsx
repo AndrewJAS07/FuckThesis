@@ -27,7 +27,7 @@ export default function LoginCommuter() {
       
       // Navigate based on user role
       if (response.user.role === 'commuter') {
-        router.replace('/dashboardrcommuter');
+        router.replace('/(commuter)/dashboardcommuter');
       } else {
         Alert.alert('Error', 'This login is for commuters only');
       }

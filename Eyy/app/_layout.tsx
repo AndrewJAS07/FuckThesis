@@ -27,16 +27,14 @@ function RootLayout() {
             <Stack.Screen name="index" />
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="(commuter)" />
             <Stack.Screen name="logincommuter" />
             <Stack.Screen name="loginrider" />
             <Stack.Screen name="signupcommuter" />
             <Stack.Screen name="signuprider" />
             <Stack.Screen name="dashboardrider" />
-            <Stack.Screen name="dashboardrcommuter" />
             <Stack.Screen name="historyrider" />
-            <Stack.Screen name="historycommuter" />
             <Stack.Screen name="profilerider" />
-            <Stack.Screen name="profilecommuter" />
             <Stack.Screen name="locationcommuter" />
             <Stack.Screen name="menucommuter" />
             <Stack.Screen name="menurider" />

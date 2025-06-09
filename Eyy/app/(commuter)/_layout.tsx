@@ -40,10 +40,8 @@ export default function CommuterLayout() {
             <Ionicons name="person" size={size} color={color} />
           ),
           tabBarShowLabel: false,
-
         }}
       />
     </Tabs>
   );
-
 } 

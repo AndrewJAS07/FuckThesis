@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Text, SafeAreaView, Platform, StatusBar, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, Text, SafeAreaView, Platform, StatusBar, TouchableOpacity, TextInput, Alert, ActivityIndicator, Linking, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Link, useRouter, useLocalSearchParams } from 'expo-router';
 import MapView, { Marker, PROVIDER_GOOGLE, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
@@ -73,7 +73,21 @@ export default function LocationCommuter() {
   const params = useLocalSearchParams();
   const mapRef = useRef<MapView>(null);
   const pathFinder = useRef(new PathFinder()).current;
-  const [currentLocation, setCurrentLocation] = useState<Location>(NAGA_CITY_CENTER);
+
+  // Test coordinates for current location
+  // You can modify these coordinates for testing different locations
+  // Current test location: SM City Naga
+  const TEST_COORDINATES = {
+    latitude: 13.6195,
+    longitude: 123.1814,
+    address: "SM City Naga"
+  };
+
+  // Comment out the line below to use real location
+  // const [currentLocation, setCurrentLocation] = useState<Location>(NAGA_CITY_CENTER);
+  // Uncomment the line below to use test coordinates
+  const [currentLocation, setCurrentLocation] = useState<Location>(TEST_COORDINATES);
+
   const [destination, setDestination] = useState<Location | null>(null);
   const [searchText, setSearchText] = useState('');
   const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null);
@@ -105,6 +119,15 @@ export default function LocationCommuter() {
   const [estimatedTime, setEstimatedTime] = useState<number>(0);
   const [fare, setFare] = useState<number>(0);
   const [totalDistance, setTotalDistance] = useState<number>(0);
+  const [showWaitingModal, setShowWaitingModal] = useState(false);
+  const [bookingDetails, setBookingDetails] = useState<{
+    rideId: string;
+    pickupAddress: string;
+    destinationAddress: string;
+    fare: number;
+    distance: number;
+    estimatedTime: number;
+  } | null>(null);
 
   // Add cache cleaning function
   const cleanCache = () => {
@@ -139,119 +162,89 @@ export default function LocationCommuter() {
   };
 
   // Initialize pathfinder with OpenStreetMap data
-  useEffect(() => {
-    const initializePathFinder = async () => {
-      try {
-        setIsLoading(true);
-        
-        // Fetch road network data around current location with a smaller radius
-        await pathFinder.fetchRoadNetwork(currentLocation, 2000); // Reduced to 2km radius
-        console.log('Initial road network fetched.', { 
-          nodes: Object.keys(pathFinder.getNodes()).length, 
-          osmNodes: Object.keys(pathFinder.getOsmNodes()).length, 
-          osmWays: Object.keys(pathFinder.getOsmWays()).length 
-        });
-        
-        // Find and connect nearest road node to current location
-        const nearestNodeId = pathFinder.findNearestOsmNode(currentLocation, 1000); // Reduced search radius
-        if (nearestNodeId) {
-          pathFinder.addNode('current', currentLocation);
-          pathFinder.addEdge('current', nearestNodeId);
-          console.log('Connected current location to nearest road node:', nearestNodeId);
-        } else {
-          console.warn('Could not connect current location to the initial road network.');
-          // Try to fetch more road network data with a smaller radius
-          await pathFinder.fetchRoadNetwork(currentLocation, 3000);
-          const retryNodeId = pathFinder.findNearestOsmNode(currentLocation, 1500);
-          if (retryNodeId) {
-            pathFinder.addNode('current', currentLocation);
-            pathFinder.addEdge('current', retryNodeId);
-            console.log('Connected current location to nearest road node on retry:', retryNodeId);
-          }
-        }
-      } catch (error) {
-        console.error('Error initializing pathfinder:', error);
-        Alert.alert('Error', 'Failed to load initial road network data. Please try again.');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    initializePathFinder();
-  }, [currentLocation]);
-
+ 
   const handleSearch = async (query: string) => {
     try {
       setIsLoading(true);
       setSearchError(null);
 
-      // Check cache first
-      const cachedResult = searchCache[query];
-      if (cachedResult?.timestamp && Date.now() - cachedResult.timestamp < CACHE_EXPIRY) {
-        console.log('Using cached search result');
-        setDestination(cachedResult);
-        updateMapRegion(cachedResult);
-        
-        // Calculate path using road network
-        const nearestCurrentOsmNodeId = pathFinder.findNearestOsmNode(currentLocation, 10000);
-        const nearestDestinationOsmNodeId = pathFinder.findNearestOsmNode(cachedResult, 10000);
-
-        if (!nearestCurrentOsmNodeId || !nearestDestinationOsmNodeId) {
-          throw new Error('Could not find road connections for cached location');
-        }
-
-        const pathResult = await calculatePath(nearestCurrentOsmNodeId, nearestDestinationOsmNodeId, cachedResult);
-        setPathCoordinates(pathResult);
-        return;
-      }
-
-      // Perform new search
       const results = await searchLocation(query);
-      if (!results || results.length === 0) {
-        throw new Error('No results found');
+      if (!results || results.length === 0) throw new Error('No results found');
+
+      const validResult = results.find(result =>
+        isWithinNagaCity({
+          latitude: result.lat,
+          longitude: result.lon,
+        } as Location)
+      );
+      if (!validResult) {
+        throw new Error("No destinations found within Naga City.");
       }
 
       const newDestination: Location = {
-        latitude: results[0].lat,
-        longitude: results[0].lon,
-        name: results[0].display_name,
-        timestamp: Date.now()
+        latitude: validResult.lat,
+        longitude: validResult.lon,
+        name: validResult.display_name,
+        address: validResult.display_name,
+        timestamp: Date.now(),
       };
-
-      // Cache the result
-      setSearchCache(prev => {
-        const newCache = { ...prev, [query]: newDestination };
-        // Remove oldest entries if cache is too large
-        const entries = Object.entries(newCache);
-        if (entries.length > MAX_CACHE_SIZE) {
-          const sortedEntries = entries.sort((a, b) => (b[1].timestamp || 0) - (a[1].timestamp || 0));
-          return Object.fromEntries(sortedEntries.slice(0, MAX_CACHE_SIZE));
-        }
-        return newCache;
-      });
 
       setDestination(newDestination);
       updateMapRegion(newDestination);
+
+      // Fetch road network data for both current location and destination
+      await pathFinder.fetchRoadNetwork(currentLocation, 3000);
+      await pathFinder.fetchRoadNetwork(newDestination, 3000);
+
+      // Find nearest OSM nodes for both points
+      const startNodeId = pathFinder.findNearestOsmNode(currentLocation, 1000);
+      const endNodeId = pathFinder.findNearestOsmNode(newDestination, 1000);
+
+      if (!startNodeId || !endNodeId) {
+        throw new Error('Could not find valid road connections for routing.');
+      }
+
+      // Add temporary nodes for start and end points
+      pathFinder.addNode("current", currentLocation);
+      pathFinder.addEdge("current", startNodeId);
+
+      pathFinder.addNode("destination", newDestination);
+      pathFinder.addEdge("destination", endNodeId);
+
+      // Calculate path using PathFinder
+      const pathResult = pathFinder.findShortestPath("current", "destination");
       
-      // Initialize pathfinder if needed
-      if (!pathFinder.getNodes()['current']) {
-        await pathFinder.fetchRoadNetwork(newDestination, 15000);
+      if (!pathResult) {
+        throw new Error('Could not find a valid route.');
       }
 
-      // Find nearest OSM nodes
-      const nearestCurrentOsmNodeId = pathFinder.findNearestOsmNode(currentLocation, 10000);
-      const nearestDestinationOsmNodeId = pathFinder.findNearestOsmNode(newDestination, 10000);
-
-      if (!nearestCurrentOsmNodeId || !nearestDestinationOsmNodeId) {
-        throw new Error('Could not find road connections for the destination');
+      // Get detailed path coordinates that follow the roads
+      const detailedPath = pathFinder.getDetailedPathCoordinates(pathResult.path);
+      
+      if (!detailedPath || detailedPath.length < 2) {
+        throw new Error('Invalid path generated.');
       }
 
-      const pathResult = await calculatePath(nearestCurrentOsmNodeId, nearestDestinationOsmNodeId, newDestination);
-      setPathCoordinates(pathResult);
+      // Update state with path information
+      setPathCoordinates(detailedPath);
+      setTotalDistance(pathResult.distance);
+      setEstimatedTime(pathResult.estimatedTime);
+      setFare(pathResult.fare);
+
+      // Fit map to show the entire route
+      if (mapRef.current) {
+        mapRef.current.fitToCoordinates(
+          detailedPath,
+          {
+            edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+            animated: true,
+          }
+        );
+      }
 
     } catch (error) {
       console.error('Search error:', error);
-      setSearchError(error instanceof Error ? error.message : 'Failed to search location');
+      setSearchError('Failed to find destination or route.');
       setDestination(null);
       setPathCoordinates([]);
     } finally {
@@ -260,49 +253,81 @@ export default function LocationCommuter() {
   };
 
   // Enhanced path calculation with smoothing
-  const calculatePath = async (startNodeId: string, endNodeId: string, destination: Location): Promise<Point[]> => {
-    try {
-      setIsLoading(true);
-      const pathResult = pathFinder.findShortestPath(startNodeId, endNodeId);
-      
-      if (!pathResult) {
-        throw new Error('No path found');
-      }
+ const calculatePath = async (
+  startNodeId: string,
+  endNodeId: string,
+  destination: Location
+): Promise<Point[]> => {
+  try {
+    setIsLoading(true);
 
-      // Get detailed path coordinates
-      const detailedPath = pathFinder.getDetailedPathCoordinates(pathResult.path);
-      
-      // Calculate fare and update state
-      const fare = calculateEstimatedFare(currentLocation, destination);
-      setFare(fare);
-      setTotalDistance(pathResult.distance);
-      setEstimatedTime(pathResult.estimatedTime);
+    console.log("🛣️ Finding shortest path from", startNodeId, "to", endNodeId);
+    const pathResult = pathFinder.findShortestPath(startNodeId, endNodeId);
 
-      // Update path coordinates
-      setPathCoordinates(detailedPath);
+    if (!pathResult || !pathResult.path || pathResult.path.length < 2) {
+      console.warn("❌ No valid route found between nodes. Falling back to straight line.");
 
-      // Animate map to show the entire path
-      if (mapRef.current && detailedPath.length > 0) {
-        const coordinates = detailedPath.map(point => ({
-          latitude: point.latitude,
-          longitude: point.longitude
-        }));
+      const fallback = [
+        { latitude: currentLocation.latitude, longitude: currentLocation.longitude },
+        { latitude: destination.latitude, longitude: destination.longitude }
+      ];
 
-        mapRef.current.fitToCoordinates(coordinates, {
-          edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
-          animated: true
-        });
-      }
-
-      return detailedPath;
-    } catch (error) {
-      console.error('Error calculating path:', error);
-      setSearchError('Failed to calculate route. Please try again.');
-      return [];
-    } finally {
-      setIsLoading(false);
+      setPathCoordinates(fallback);
+      return fallback;
     }
-  };
+
+    const detailedPath = pathFinder.getDetailedPathCoordinates(pathResult.path);
+
+    if (!detailedPath || detailedPath.length < 2) {
+      console.warn("⚠️ Detailed path is too short, falling back to straight line.");
+
+      const fallback = [
+        { latitude: currentLocation.latitude, longitude: currentLocation.longitude },
+        { latitude: destination.latitude, longitude: destination.longitude }
+      ];
+
+      setPathCoordinates(fallback);
+      return fallback;
+    }
+
+    console.log("✅ Detailed path returned:", detailedPath.length, "points");
+
+    const fare = calculateEstimatedFare(currentLocation, destination);
+    setFare(fare);
+    setTotalDistance(pathResult.distance);
+    setEstimatedTime(pathResult.estimatedTime);
+    setPathCoordinates(detailedPath);
+
+    if (mapRef.current) {
+      mapRef.current.fitToCoordinates(
+        detailedPath.map(p => ({
+          latitude: p.latitude,
+          longitude: p.longitude,
+        })),
+        {
+          edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+          animated: true,
+        }
+      );
+    }
+
+    return detailedPath;
+  } catch (error) {
+    console.error("❌ Error calculating path:", error);
+
+    // Extra fallback to straight line in case of unexpected errors
+    const fallback = [
+      { latitude: currentLocation.latitude, longitude: currentLocation.longitude },
+      { latitude: destination.latitude, longitude: destination.longitude }
+    ];
+
+    setPathCoordinates(fallback);
+    return fallback;
+  } finally {
+    setIsLoading(false);
+  }
+};
+
 
   // Enhanced path smoothing
   const smoothPath = (points: Point[]): Point[] => {
@@ -352,16 +377,19 @@ export default function LocationCommuter() {
     mapRef.current?.animateToRegion(newRegion, 300);
   };
 
-  const debouncedSearch = (text: string) => {
-    if (searchTimeout) {
-      clearTimeout(searchTimeout);
-    }
-    setSearchText(text);
-    const timeout = setTimeout(() => {
-      handleSearch(text);
-    }, 300); // Reduced debounce time to 300ms for better responsiveness
-    setSearchTimeout(timeout);
-  };
+const debouncedSearch = (text: string) => {
+  if (searchTimeout) {
+    clearTimeout(searchTimeout);
+  }
+  setSearchText(text);
+  const timeout = setTimeout(() => {
+    console.log("Searching for:", text); // ✅ this is the fix
+    handleSearch(text);
+    
+  }, 300);
+  setSearchTimeout(timeout);
+};
+
 
   const calculateDistance = (loc1: Location, loc2: Location): number => {
     const R = 6371e3; // Earth's radius in meters
@@ -387,119 +415,98 @@ export default function LocationCommuter() {
     );
   };
 
-  const handleChooseDestination = async () => {
-    if (!destination || isLoading || isBooking) return;
+const handleChooseDestination = async () => {
+  if (!destination || isLoading || isBooking) return;
 
-    try {
-      setIsBooking(true);
-      
-      // Validate current location and destination
-      if (!currentLocation || !destination) {
-        throw new Error('Invalid location data');
-      }
+  try {
+    setIsBooking(true);
 
-      // Validate coordinates
-      if (isNaN(currentLocation.latitude) || isNaN(currentLocation.longitude) ||
-          isNaN(destination.latitude) || isNaN(destination.longitude)) {
-        throw new Error('Invalid coordinates');
-      }
-
-      // Calculate distance and fare
-      const distance = calculateDistance(currentLocation, destination);
-      if (distance <= 0) {
-        throw new Error('Invalid distance calculation');
-      }
-
-      const estimatedFare = calculateEstimatedFare(currentLocation, destination);
-      if (estimatedFare <= 0) {
-        throw new Error('Invalid fare calculation');
-      }
-
-      // Create ride data with all necessary fields
-      const rideData = {
-        pickupLocation: {
-          type: 'Point',
-          coordinates: [currentLocation.longitude, currentLocation.latitude] as [number, number],
-          address: currentLocation.address || "Current Location"
-        },
-        dropoffLocation: {
-          type: 'Point',
-          coordinates: [destination.longitude, destination.latitude] as [number, number],
-          address: destination.address || searchText || "Selected Destination"
-        },
-        fare: estimatedFare,
-        distance: distance,
-        duration: Math.ceil(distance / 1000 * 3), // Rough estimate: 3 minutes per km
-        paymentMethod: 'cash', // Default to cash payment
-        status: 'pending'
-      };
-
-      console.log('Creating ride with data:', {
-        pickup: rideData.pickupLocation,
-        dropoff: rideData.dropoffLocation,
-        fare: rideData.fare,
-        distance: rideData.distance
-      });
-
-      // Create ride with retry logic
-      let retryCount = 0;
-      const maxRetries = 2;
-      let rideResponse = null;
-
-      while (retryCount < maxRetries && !rideResponse) {
-        try {
-          rideResponse = await rideAPI.createRide(rideData);
-          if (!rideResponse || !rideResponse.id) {
-            throw new Error('Invalid ride response');
-          }
-          console.log('Ride created successfully:', rideResponse.id);
-        } catch (error) {
-          console.error(`Ride creation attempt ${retryCount + 1} failed:`, error);
-          retryCount++;
-          if (retryCount === maxRetries) {
-            throw new Error('Failed to create ride after multiple attempts');
-          }
-          // Wait before retrying
-          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
-        }
-      }
-
-      if (!rideResponse || !rideResponse.id) {
-        throw new Error('Failed to create ride. Please try again.');
-      }
-
-      // Navigate to booking screen with the ride data
-      router.push({
-        pathname: "/(commuter)/booking",
-        params: {
-          rideId: rideResponse.id,
-          pickupLat: currentLocation.longitude.toString(),
-          pickupLng: currentLocation.latitude.toString(),
-          destLat: destination.latitude.toString(),
-          destLng: destination.longitude.toString(),
-          destAddress: destination.address || searchText,
-          distance: distance.toString(),
-          fare: estimatedFare.toString(),
-          timestamp: new Date().toISOString()
-        }
-      });
-
-    } catch (error) {
-      console.error('Error creating booking:', error);
-      Alert.alert(
-        'Booking Error',
-        error instanceof Error ? error.message : 'Failed to create booking. Please try again.'
-      );
-    } finally {
-      setIsBooking(false);
+    // 🧠 Basic validations
+    if (!currentLocation || !destination) {
+      throw new Error('Invalid location data');
     }
+
+    if (
+      isNaN(currentLocation.latitude) || isNaN(currentLocation.longitude) ||
+      isNaN(destination.latitude) || isNaN(destination.longitude)
+    ) {
+      throw new Error('Invalid coordinates');
+    }
+
+    // 🧮 Distance + fare calculation
+    const distance = calculateDistance(currentLocation, destination);
+    if (distance <= 0) {
+      throw new Error('Invalid distance calculation');
+    }
+
+    const estimatedFare = calculateEstimatedFare(currentLocation, destination);
+    if (estimatedFare <= 0) {
+      throw new Error('Invalid fare calculation');
+    }
+
+    // ✅ CLEAN rideData object — no extra keys inside GeoJSON
+  const rideData = {
+    pickupLocation: {
+      type: 'Point',
+      coordinates: [currentLocation.longitude, currentLocation.latitude] as [number, number],
+      address: currentLocation.address || "Current Location"
+    },
+    dropoffLocation: {
+      type: 'Point',
+      coordinates: [destination.longitude, destination.latitude] as [number, number],
+      address: destination.address || searchText || "Selected Destination"
+    },
+    fare: estimatedFare,
+    distance,
+    duration: Math.ceil(distance / 1000 * 3),
+    paymentMethod: 'cash',
+    status: 'pending',
   };
+
+
+
+  console.log("Creating ride with:", JSON.stringify(rideData, null, 2));
+
+    // 🛰️ Send to backend
+    const rideResponse = await rideAPI.createRide(rideData);
+
+    if (!rideResponse || !rideResponse.id) {
+      throw new Error('Ride creation failed: no ride ID returned.');
+    }
+
+    console.log('✅ Ride created:', rideResponse.id);
+
+    // Set booking details for the modal
+    setBookingDetails({
+      rideId: rideResponse.id,
+      pickupAddress: currentLocation.address || "Current Location",
+      destinationAddress: destination.address || searchText,
+      fare: estimatedFare,
+      distance: distance,
+      estimatedTime: Math.ceil(distance / 1000 * 3)
+    });
+
+    // Show the waiting modal
+    setShowWaitingModal(true);
+
+  } catch (error) {
+    console.error('❌ Booking error:', error);
+    Alert.alert(
+      'Booking Error',
+      error instanceof Error ? error.message : 'Something went wrong. Please try again.'
+    );
+  } finally {
+    setIsBooking(false);
+  }
+};
+
+
 
   const calculateEstimatedFare = (start: Location, end: Location): number => {
     const distance = calculateDistance(start, end);
-    const baseFare = 50; // Base fare in pesos
-    const perKmRate = 15; // Rate per kilometer
-    const minimumFare = 70; // Minimum fare in pesos
+    const baseFare = 15; // Base fare in pesos
+    const perKmRate = 5; // Rate per kilometer
+    const minimumFare = 15; // Minimum fare in pesos
     
     const fare = baseFare + (distance / 1000 * perKmRate); // Convert meters to kilometers
     return Math.max(fare, minimumFare);
@@ -508,65 +515,116 @@ export default function LocationCommuter() {
   const getCurrentLocation = async () => {
     try {
       setIsLoading(true);
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Location permission is required to use this feature.');
+      
+      // Request location permissions with better error handling
+      const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
+      if (foregroundStatus !== 'granted') {
+        Alert.alert(
+          'Location Permission Required',
+          'Please enable location services to use this feature. You can enable it in your device settings.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() }
+          ]
+        );
         return;
       }
 
       // Get initial location with high accuracy
       const location = await Location.getCurrentPositionAsync({
-        accuracy: LOCATION_SETTINGS.HIGH_ACCURACY.accuracy,
+        accuracy: Location.Accuracy.BestForNavigation,
+        timeInterval: 1000,
+        distanceInterval: 1,
       });
+
+      // Validate location data
+      if (!location.coords || 
+          typeof location.coords.latitude !== 'number' || 
+          typeof location.coords.longitude !== 'number') {
+        throw new Error('Invalid location data received');
+      }
 
       const newLocation: Location = {
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
         accuracy: location.coords.accuracy,
+        heading: location.coords.heading || undefined,
+        address: "Current Location",
+        timestamp: Date.now()
       };
 
-      if (isWithinNagaCity(newLocation)) {
-        setCurrentLocation(newLocation);
-        setLocationAccuracy(location.coords.accuracy);
-        
-        // Zoom to user location with closer zoom
-        const newRegion = {
-          latitude: newLocation.latitude,
-          longitude: newLocation.longitude,
-          latitudeDelta: 0.001, // Closer zoom
-          longitudeDelta: 0.001,
-        };
-        setRegion(newRegion);
-        mapRef.current?.animateToRegion(newRegion, 300);
+      // Check if location is within Naga City
+      if (!isWithinNagaCity(newLocation)) {
+        Alert.alert(
+          'Location Out of Range',
+          'You must be within Naga City to use this service.',
+          [{ text: 'OK' }]
+        );
+        return;
       }
 
+      // Update current location state
+      setCurrentLocation(newLocation);
+      setLocationAccuracy(location.coords.accuracy);
+      
+      // Zoom to user location
+      const newRegion = {
+        latitude: newLocation.latitude,
+        longitude: newLocation.longitude,
+        latitudeDelta: 0.005, // Closer zoom for better visibility
+        longitudeDelta: 0.005,
+      };
+      setRegion(newRegion);
+      mapRef.current?.animateToRegion(newRegion, 1000);
+
       // Start watching location with high accuracy
+      if (locationSubscription.current) {
+        locationSubscription.current.remove();
+      }
+
       locationSubscription.current = await Location.watchPositionAsync(
         {
-          accuracy: LOCATION_SETTINGS.HIGH_ACCURACY.accuracy,
-          timeInterval: LOCATION_SETTINGS.HIGH_ACCURACY.timeInterval,
-          distanceInterval: LOCATION_SETTINGS.HIGH_ACCURACY.distanceInterval,
+          accuracy: Location.Accuracy.BestForNavigation,
+          timeInterval: 1000,
+          distanceInterval: 1,
         },
         (location) => {
           const newLocation: Location = {
             latitude: location.coords.latitude,
             longitude: location.coords.longitude,
             accuracy: location.coords.accuracy,
+            heading: location.coords.heading || undefined,
+            timestamp: Date.now()
           };
 
+          // Only update if location is within Naga City and has good accuracy
           if (isWithinNagaCity(newLocation) && 
               location.coords.accuracy !== null && 
-              location.coords.accuracy <= LOCATION_SETTINGS.MAX_ACCURACY_THRESHOLD) {
+              location.coords.accuracy <= 20) { // Stricter accuracy threshold
             setCurrentLocation(newLocation);
             setLocationAccuracy(location.coords.accuracy);
             setLastLocationUpdate(Date.now());
+
+            // Update map region if in follow mode
+            if (navigationMode === 'follow') {
+              mapRef.current?.animateToRegion({
+                latitude: newLocation.latitude,
+                longitude: newLocation.longitude,
+                latitudeDelta: 0.005,
+                longitudeDelta: 0.005,
+              }, 1000);
+            }
           }
         }
       );
 
     } catch (error) {
       console.error('Error getting location:', error);
-      Alert.alert('Error', 'Failed to get your current location. Please try again.');
+      Alert.alert(
+        'Location Error',
+        'Failed to get your current location. Please check your device settings and try again.',
+        [{ text: 'OK' }]
+      );
     } finally {
       setIsLoading(false);
     }
@@ -581,6 +639,7 @@ export default function LocationCommuter() {
       }
     };
   }, []);
+
 
   // Add cache cleaning on component mount
   useEffect(() => {
@@ -757,12 +816,78 @@ export default function LocationCommuter() {
     }
   }, [currentLocation, isRiderView, pathCoordinates]);
 
+  // Add the WaitingModal component
+  const WaitingModal = () => (
+    <Modal
+      visible={showWaitingModal}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={() => setShowWaitingModal(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Waiting for Rider</Text>
+            <ActivityIndicator size="large" color="#0d4217" />
+          </View>
+
+          <View style={styles.bookingInfo}>
+            <View style={styles.infoRow}>
+              <Ionicons name="location" size={24} color="#0d4217" />
+              <View style={styles.infoText}>
+                <Text style={styles.infoLabel}>Pickup</Text>
+                <Text style={styles.infoValue}>{bookingDetails?.pickupAddress}</Text>
+              </View>
+            </View>
+
+            <View style={styles.infoRow}>
+              <Ionicons name="flag" size={24} color="#e74c3c" />
+              <View style={styles.infoText}>
+                <Text style={styles.infoLabel}>Destination</Text>
+                <Text style={styles.infoValue}>{bookingDetails?.destinationAddress}</Text>
+              </View>
+            </View>
+
+            <View style={styles.infoRow}>
+              <Ionicons name="cash" size={24} color="#0d4217" />
+              <View style={styles.infoText}>
+                <Text style={styles.infoLabel}>Fare</Text>
+                <Text style={styles.infoValue}>₱{bookingDetails?.fare.toFixed(2)}</Text>
+              </View>
+            </View>
+
+            <View style={styles.infoRow}>
+              <Ionicons name="time" size={24} color="#0d4217" />
+              <View style={styles.infoText}>
+                <Text style={styles.infoLabel}>Estimated Time</Text>
+                <Text style={styles.infoValue}>{bookingDetails?.estimatedTime} minutes</Text>
+              </View>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={() => {
+              setShowWaitingModal(false);
+              router.push("/(commuter)/dashboardcommuter");
+            }}
+          >
+            <Text style={styles.cancelButtonText}>Cancel Booking</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="close" size={24} color="#fff" />
+        <TouchableOpacity 
+          onPress={() => router.push("/(commuter)/dashboardcommuter")} 
+          style={styles.backButton}
+        >
+          <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
         <View style={styles.searchContainer}>
           <Ionicons name="location-outline" size={20} color="#0d4217" />
@@ -792,7 +917,7 @@ export default function LocationCommuter() {
         <MapView
           ref={mapRef}
           style={styles.map}
-          provider={PROVIDER_DEFAULT}
+          provider={PROVIDER_GOOGLE}
           showsUserLocation
           showsMyLocationButton
           showsCompass
@@ -831,7 +956,7 @@ export default function LocationCommuter() {
             </Marker>
           )}
 
-          {/* Path Polyline */}
+          {/* Road-following Polyline */}
           {pathCoordinates.length > 0 && (
             <Polyline
               coordinates={pathCoordinates}
@@ -839,8 +964,6 @@ export default function LocationCommuter() {
               strokeColor="#0d4217"
               lineDashPattern={[1]}
               zIndex={1}
-              tappable={false}
-              geodesic={true}
             />
           )}
         </MapView>
@@ -876,18 +999,6 @@ export default function LocationCommuter() {
         </Text>
       </TouchableOpacity>
 
-      {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
-        <Link href="/(commuter)/dashboardcommuter" style={[styles.navItem, styles.inactiveNavItem]}>
-          <Ionicons name="home" size={24} color="#004D00" style={styles.inactiveIcon} />
-        </Link>
-        <Link href="/historycommuter" style={[styles.navItem, styles.inactiveNavItem]}>
-          <Ionicons name="time" size={24} color="#004D00" style={styles.inactiveIcon} />
-        </Link>
-        <Link href="/profilecommuter" style={[styles.navItem, styles.inactiveNavItem]}>
-          <Ionicons name="person" size={24} color="#004D00" style={styles.inactiveIcon} />
-        </Link>
-      </View>
 
       {/* Rider controls overlay */}
       <View style={styles.controlsOverlay}>
@@ -926,6 +1037,9 @@ export default function LocationCommuter() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Add the WaitingModal component */}
+      <WaitingModal />
     </SafeAreaView>
   );
 }
@@ -1123,5 +1237,70 @@ const styles = StyleSheet.create({
   timeInfo: {
     fontSize: 14,
     color: '#666'
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#0d4217',
+    marginBottom: 10,
+  },
+  bookingInfo: {
+    marginBottom: 20,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+    paddingHorizontal: 10,
+  },
+  infoText: {
+    marginLeft: 15,
+    flex: 1,
+  },
+  infoLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 2,
+  },
+  infoValue: {
+    fontSize: 16,
+    color: '#000',
+    fontWeight: '500',
+  },
+  cancelButton: {
+    backgroundColor: '#e74c3c',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 }); 

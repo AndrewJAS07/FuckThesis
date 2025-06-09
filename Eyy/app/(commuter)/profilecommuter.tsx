@@ -96,18 +96,6 @@ export default function ProfileCommuter() {
         </View>
       </ScrollView>
 
-      {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
-        <Link href="/dashboardcommuter" style={[styles.navItem, styles.inactiveNavItem]}>
-          <Ionicons name="home" size={24} color="#004D00" style={styles.inactiveIcon} />
-        </Link>
-        <Link href="/historycommuter" style={[styles.navItem, styles.inactiveNavItem]}>
-          <Ionicons name="time" size={24} color="#004D00" style={styles.inactiveIcon} />
-        </Link>
-        <Link href="/profilecommuter" style={styles.navItem}>
-          <Ionicons name="person" size={24} color="#004D00" />
-        </Link>
-      </View>
     </SafeAreaView>
   );
 }

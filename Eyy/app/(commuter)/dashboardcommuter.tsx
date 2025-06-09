@@ -118,7 +118,16 @@ export default function DashboardCommuter() {
       {/* Book Button */}
       <TouchableOpacity 
         style={styles.bookButton}
-        onPress={() => router.push('/locationcommuter')}
+        onPress={() => router.push({
+          pathname: '/locationcommuter',
+          params: {
+            initialLocation: JSON.stringify({
+              latitude: currentLocation.latitude,
+              longitude: currentLocation.longitude,
+              accuracy: locationAccuracy
+            })
+          }
+        })}
       >
         <Text style={styles.bookButtonText}>Book eyytrike</Text>
       </TouchableOpacity>

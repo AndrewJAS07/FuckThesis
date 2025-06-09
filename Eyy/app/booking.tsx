@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, SafeAreaView, Platform, StatusBar, TouchableOpa
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Marker, PROVIDER_GOOGLE, Polyline } from 'react-native-maps';
-import { rideAPI } from '../../lib/api';
+import { rideAPI } from '../lib/api';
 
 interface BookingData {
   pickup: {
@@ -38,24 +38,52 @@ const BookingScreen: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (params.bookingData) {
-      const data = JSON.parse(params.bookingData as string) as BookingData;
-      setBookingData(data);
-      
-      // Set initial map region to show both pickup and destination
-      const centerLat = (data.pickup.latitude + data.destination.latitude) / 2;
-      const centerLon = (data.pickup.longitude + data.destination.longitude) / 2;
-      setRegion({
-        latitude: centerLat,
-        longitude: centerLon,
-        latitudeDelta: Math.abs(data.pickup.latitude - data.destination.latitude) * 1.5,
-        longitudeDelta: Math.abs(data.pickup.longitude - data.destination.longitude) * 1.5,
-      });
+    // Parse the parameters from the location screen
+    const pickupLat = parseFloat(params.pickupLat as string);
+    const pickupLng = parseFloat(params.pickupLng as string);
+    const destLat = parseFloat(params.destLat as string);
+    const destLng = parseFloat(params.destLng as string);
+    const distance = parseFloat(params.distance as string);
+    const fare = parseFloat(params.fare as string);
 
-      // Create ride in backend
-      createRide(data);
+    if (isNaN(pickupLat) || isNaN(pickupLng) || isNaN(destLat) || isNaN(destLng) || isNaN(distance) || isNaN(fare)) {
+      setError('Invalid booking data');
+      setIsLoading(false);
+      return;
     }
-  }, [params.bookingData]);
+
+    const data: BookingData = {
+      pickup: {
+        latitude: pickupLat,
+        longitude: pickupLng,
+        address: params.pickupAddress as string || 'Current Location'
+      },
+      destination: {
+        latitude: destLat,
+        longitude: destLng,
+        address: params.destAddress as string || 'Selected Destination'
+      },
+      timestamp: params.timestamp as string || new Date().toISOString(),
+      status: 'pending',
+      estimatedFare: fare,
+      distance: distance
+    };
+
+    setBookingData(data);
+    
+    // Set initial map region to show both pickup and destination
+    const centerLat = (data.pickup.latitude + data.destination.latitude) / 2;
+    const centerLon = (data.pickup.longitude + data.destination.longitude) / 2;
+    setRegion({
+      latitude: centerLat,
+      longitude: centerLon,
+      latitudeDelta: Math.abs(data.pickup.latitude - data.destination.latitude) * 1.5,
+      longitudeDelta: Math.abs(data.pickup.longitude - data.destination.longitude) * 1.5,
+    });
+
+    // Create ride in backend
+    createRide(data);
+  }, [params]);
 
   const createRide = async (data: BookingData) => {
     try {
@@ -73,7 +101,7 @@ const BookingScreen: React.FC = () => {
         },
         fare: data.estimatedFare,
         distance: data.distance,
-        duration: 0,
+        duration: Math.ceil(data.distance / 1000 * 3), // Rough estimate: 3 minutes per km
         paymentMethod: 'cash',
         status: 'pending'
       });
@@ -148,7 +176,10 @@ const BookingScreen: React.FC = () => {
   if (!bookingData || isLoading) {
     return (
       <SafeAreaView style={styles.container}>
-        <ActivityIndicator size="large" color="#0d4217" />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#0d4217" />
+          <Text style={styles.loadingText}>Creating your ride...</Text>
+        </View>
       </SafeAreaView>
     );
   }
@@ -160,7 +191,7 @@ const BookingScreen: React.FC = () => {
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity 
             style={styles.retryButton}
-            onPress={() => createRide(bookingData)}
+            onPress={() => bookingData && createRide(bookingData)}
           >
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
@@ -271,16 +302,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   backButton: {
-    padding: 4,
+    marginRight: 16,
   },
   headerTitle: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
-    marginLeft: 16,
   },
   mapContainer: {
     flex: 1,
+    position: 'relative',
   },
   map: {
     width: '100%',
@@ -289,9 +320,6 @@ const styles = StyleSheet.create({
   pickupMarker: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-    borderRadius: 20,
-    padding: 4,
   },
   destinationMarker: {
     alignItems: 'center',
@@ -338,8 +366,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   cancelButton: {
-    backgroundColor: '#FF3B30',
-    padding: 16,
+    backgroundColor: '#FF0000',
+    paddingVertical: 16,
     borderRadius: 25,
     alignItems: 'center',
   },
@@ -352,26 +380,36 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 16,
   },
   errorText: {
-    color: '#FF3B30',
+    color: '#FF0000',
     fontSize: 16,
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   retryButton: {
     backgroundColor: '#0d4217',
-    padding: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
     borderRadius: 25,
-    alignItems: 'center',
-    minWidth: 120,
   },
   retryButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#0d4217',
+    fontWeight: 'bold',
+  },
 });
 
-export default BookingScreen; 
+export default BookingScreen;
