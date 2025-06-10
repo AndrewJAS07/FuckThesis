@@ -1,3 +1,5 @@
+import { dijkstra } from './dijkstra'; // Import the dijkstra function
+
 export interface Point {
   latitude: number;
   longitude: number;
@@ -223,6 +225,23 @@ export class PathFinder {
   }
 
   /**
+   * Convert PathFinder graph to Dijkstra-compatible graph format
+   */
+  private convertGraphToDijkstraFormat(): Record<string, Record<string, number>> {
+    const graph: Record<string, Record<string, number>> = {};
+
+    for (const [nodeId, node] of Object.entries(this.nodes)) {
+      graph[nodeId] = {};
+      for (const neighborId of node.neighbors) {
+        const distance = this.haversineDistance(node.point, this.nodes[neighborId].point);
+        graph[nodeId][neighborId] = distance;
+      }
+    }
+
+    return graph;
+  }
+
+  /**
    * Find shortest path using Dijkstra's algorithm
    */
   findShortestPath(startId: string, endId: string): PathResult | null {
@@ -231,84 +250,26 @@ export class PathFinder {
       return null;
     }
 
-    // Initialize distances and previous nodes
-    const distances: Record<string, number> = {};
-    const previous: Record<string, string | null> = {};
-    const visited = new Set<string>();
-    
-    // Priority queue implementation using array (for simplicity)
-    const unvisited: string[] = [];
+    // Convert graph to Dijkstra-compatible format
+    const graph = this.convertGraphToDijkstraFormat();
 
-    // Initialize all distances to infinity
-    for (const nodeId of Object.keys(this.nodes)) {
-      distances[nodeId] = nodeId === startId ? 0 : Infinity;
-      previous[nodeId] = null;
-      unvisited.push(nodeId);
-    }
+    // Use Dijkstra's algorithm to find the shortest path
+    const result = dijkstra(graph, startId, endId);
 
-    while (unvisited.length > 0) {
-      // Find unvisited node with minimum distance
-      let currentNode = unvisited.reduce((minNode, node) => 
-        distances[node] < distances[minNode] ? node : minNode
-      );
-
-      // Remove current node from unvisited
-      const currentIndex = unvisited.indexOf(currentNode);
-      unvisited.splice(currentIndex, 1);
-      visited.add(currentNode);
-
-      // If we reached the destination, break
-      if (currentNode === endId) {
-        break;
-      }
-
-      // If current distance is infinity, no path exists
-      if (distances[currentNode] === Infinity) {
-        break;
-      }
-
-      // Check all neighbors
-      for (const neighborId of this.nodes[currentNode].neighbors) {
-        if (visited.has(neighborId)) continue;
-
-        const edgeWeight = this.haversineDistance(
-          this.nodes[currentNode].point,
-          this.nodes[neighborId].point
-        );
-
-        const alternativeDistance = distances[currentNode] + edgeWeight;
-
-        if (alternativeDistance < distances[neighborId]) {
-          distances[neighborId] = alternativeDistance;
-          previous[neighborId] = currentNode;
-        }
-      }
-    }
-
-    // Reconstruct path
-    const path: string[] = [];
-    let currentNode: string | null = endId;
-
-    while (currentNode !== null) {
-      path.unshift(currentNode);
-      currentNode = previous[currentNode];
-    }
-
-    // Check if path was found
-    if (path.length === 0 || path[0] !== startId) {
+    if (!result.path || result.path.length === 0) {
       console.error('No path found between nodes');
       return null;
     }
 
     // Generate coordinates and instructions
-    const coordinates = path.map(nodeId => this.nodes[nodeId].point);
-    const instructions = this.generateInstructions(path);
+    const coordinates = result.path.map(nodeId => this.nodes[nodeId].point);
+    const instructions = this.generateInstructions(result.path);
 
     return {
-      path,
-      distance: distances[endId],
+      path: result.path,
+      distance: result.distance,
       coordinates,
-      instructions
+      instructions,
     };
   }
 
