@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Text, SafeAreaView, Platform, StatusBar, TouchableOpacity, TextInput, Alert, ActivityIndicator, Linking, Modal } from 'react-native';
+import { View, StyleSheet, Text, SafeAreaView, Platform, StatusBar, TouchableOpacity, TextInput, Alert, ActivityIndicator, Linking, Modal, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Link, useRouter, useLocalSearchParams } from 'expo-router';
 import MapView, { Marker, PROVIDER_GOOGLE, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
@@ -73,6 +73,8 @@ export default function LocationCommuter() {
   const params = useLocalSearchParams();
   const mapRef = useRef<MapView>(null);
   const pathFinder = useRef(new PathFinder()).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const locationSubscription = useRef<Location.LocationSubscription | null>(null);
 
   // Test coordinates for current location
   // You can modify these coordinates for testing different locations
@@ -84,9 +86,9 @@ export default function LocationCommuter() {
   };
 
   // Comment out the line below to use real location
-  // const [currentLocation, setCurrentLocation] = useState<Location>(NAGA_CITY_CENTER);
+  const [currentLocation, setCurrentLocation] = useState<Location>(NAGA_CITY_CENTER);
   // Uncomment the line below to use test coordinates
-  const [currentLocation, setCurrentLocation] = useState<Location>(TEST_COORDINATES);
+  //const [currentLocation, setCurrentLocation] = useState<Location>(TEST_COORDINATES);
 
   const [destination, setDestination] = useState<Location | null>(null);
   const [searchText, setSearchText] = useState('');
@@ -109,7 +111,6 @@ export default function LocationCommuter() {
   const [lastLocationUpdate, setLastLocationUpdate] = useState<number>(0);
   const LOCATION_UPDATE_INTERVAL = 5000; // 5 seconds
   const [isBooking, setIsBooking] = useState(false);
-  const locationSubscription = useRef<Location.LocationSubscription | null>(null);
   const [isRiderView, setIsRiderView] = useState(false);
   const [mapStyle, setMapStyle] = useState('standard');
   const [showTraffic, setShowTraffic] = useState(false);
@@ -168,19 +169,41 @@ export default function LocationCommuter() {
       setIsLoading(true);
       setSearchError(null);
 
-      const results = await searchLocation(query);
-      if (!results || results.length === 0) throw new Error('No results found');
-
-      const validResult = results.find(result =>
-        isWithinNagaCity({
-          latitude: result.lat,
-          longitude: result.lon,
-        } as Location)
-      );
-      if (!validResult) {
-        throw new Error("No destinations found within Naga City.");
+      // Validate search query
+      if (!query.trim()) {
+        setSearchError('Please enter a destination');
+        return;
       }
 
+      const results = await searchLocation(query);
+      if (!results || results.length === 0) {
+        setSearchError('No locations found. Please try a different search term.');
+        return;
+      }
+
+      // Filter and sort results by relevance to Naga City
+      const validResults = results
+        .filter(result => 
+          isWithinNagaCity({
+            latitude: result.lat,
+            longitude: result.lon,
+          } as Location)
+        )
+        .sort((a, b) => {
+          // Prioritize results that contain "Naga" in their name
+          const aHasNaga = a.display_name.toLowerCase().includes('naga');
+          const bHasNaga = b.display_name.toLowerCase().includes('naga');
+          if (aHasNaga && !bHasNaga) return -1;
+          if (!aHasNaga && bHasNaga) return 1;
+          return 0;
+        });
+
+      if (validResults.length === 0) {
+        setSearchError('No destinations found within Naga City. Please try a different location.');
+        return;
+      }
+
+      const validResult = validResults[0];
       const newDestination: Location = {
         latitude: validResult.lat,
         longitude: validResult.lon,
@@ -192,59 +215,99 @@ export default function LocationCommuter() {
       setDestination(newDestination);
       updateMapRegion(newDestination);
 
-      // Fetch road network data for both current location and destination
-      await pathFinder.fetchRoadNetwork(currentLocation, 3000);
-      await pathFinder.fetchRoadNetwork(newDestination, 3000);
+      // Fetch road network data with retry mechanism
+      let roadNetworkSuccess = false;
+      let retryCount = 0;
+      const maxRetries = 3;
 
-      // Find nearest OSM nodes for both points
-      const startNodeId = pathFinder.findNearestOsmNode(currentLocation, 1000);
-      const endNodeId = pathFinder.findNearestOsmNode(newDestination, 1000);
+      while (!roadNetworkSuccess && retryCount < maxRetries) {
+        try {
+          // Fetch road network data for both current location and destination
+          await pathFinder.fetchRoadNetwork(currentLocation, 3000);
+          await pathFinder.fetchRoadNetwork(newDestination, 3000);
 
-      if (!startNodeId || !endNodeId) {
-        throw new Error('Could not find valid road connections for routing.');
-      }
+          // Find nearest OSM nodes for both points
+          const startNodeId = pathFinder.findNearestOsmNode(currentLocation, 1000);
+          const endNodeId = pathFinder.findNearestOsmNode(newDestination, 1000);
 
-      // Add temporary nodes for start and end points
-      pathFinder.addNode("current", currentLocation);
-      pathFinder.addEdge("current", startNodeId);
-
-      pathFinder.addNode("destination", newDestination);
-      pathFinder.addEdge("destination", endNodeId);
-
-      // Calculate path using PathFinder
-      const pathResult = pathFinder.findShortestPath("current", "destination");
-      
-      if (!pathResult) {
-        throw new Error('Could not find a valid route.');
-      }
-
-      // Get detailed path coordinates that follow the roads
-      const detailedPath = pathFinder.getDetailedPathCoordinates(pathResult.path);
-      
-      if (!detailedPath || detailedPath.length < 2) {
-        throw new Error('Invalid path generated.');
-      }
-
-      // Update state with path information
-      setPathCoordinates(detailedPath);
-      setTotalDistance(pathResult.distance);
-      setEstimatedTime(pathResult.estimatedTime);
-      setFare(pathResult.fare);
-
-      // Fit map to show the entire route
-      if (mapRef.current) {
-        mapRef.current.fitToCoordinates(
-          detailedPath,
-          {
-            edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
-            animated: true,
+          if (!startNodeId || !endNodeId) {
+            throw new Error('Could not find valid road connections for routing.');
           }
-        );
+
+          // Add temporary nodes for start and end points
+          pathFinder.addNode("current", currentLocation);
+          pathFinder.addEdge("current", startNodeId);
+
+          pathFinder.addNode("destination", newDestination);
+          pathFinder.addEdge("destination", endNodeId);
+
+          // Calculate path using PathFinder
+          const pathResult = pathFinder.findShortestPath("current", "destination");
+          
+          if (!pathResult) {
+            throw new Error('Could not find a valid route.');
+          }
+
+          // Get detailed path coordinates that follow the roads
+          const detailedPath = pathFinder.getDetailedPathCoordinates(pathResult.path);
+          
+          if (!detailedPath || detailedPath.length < 2) {
+            throw new Error('Invalid path generated.');
+          }
+
+          // Update state with path information
+          setPathCoordinates(detailedPath);
+          setTotalDistance(pathResult.distance);
+          setEstimatedTime(pathResult.estimatedTime);
+          setFare(pathResult.fare);
+
+          // Fit map to show the entire route
+          if (mapRef.current) {
+            mapRef.current.fitToCoordinates(
+              detailedPath,
+              {
+                edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+                animated: true,
+              }
+            );
+          }
+
+          roadNetworkSuccess = true;
+        } catch (error) {
+          retryCount++;
+          if (retryCount === maxRetries) {
+            // If all retries failed, fall back to straight line path
+            const fallbackPath = [
+              { latitude: currentLocation.latitude, longitude: currentLocation.longitude },
+              { latitude: newDestination.latitude, longitude: newDestination.longitude }
+            ];
+            setPathCoordinates(fallbackPath);
+            const distance = calculateDistance(currentLocation, newDestination);
+            setTotalDistance(distance);
+            setEstimatedTime(distance / 1000 / 15 * 60); // Assuming 15 km/h average speed
+            setFare(calculateEstimatedFare(currentLocation, newDestination));
+            
+            if (mapRef.current) {
+              mapRef.current.fitToCoordinates(
+                fallbackPath,
+                {
+                  edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+                  animated: true,
+                }
+              );
+            }
+            
+            setSearchError('Using direct route due to road network limitations.');
+          } else {
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
       }
 
     } catch (error) {
       console.error('Search error:', error);
-      setSearchError('Failed to find destination or route.');
+      setSearchError(error instanceof Error ? error.message : 'Failed to find destination or route.');
       setDestination(null);
       setPathCoordinates([]);
     } finally {
@@ -421,7 +484,7 @@ const handleChooseDestination = async () => {
   try {
     setIsBooking(true);
 
-    // 🧠 Basic validations
+    // Basic validations
     if (!currentLocation || !destination) {
       throw new Error('Invalid location data');
     }
@@ -433,7 +496,7 @@ const handleChooseDestination = async () => {
       throw new Error('Invalid coordinates');
     }
 
-    // 🧮 Distance + fare calculation
+    // Distance + fare calculation
     const distance = calculateDistance(currentLocation, destination);
     if (distance <= 0) {
       throw new Error('Invalid distance calculation');
@@ -444,55 +507,26 @@ const handleChooseDestination = async () => {
       throw new Error('Invalid fare calculation');
     }
 
-    // ✅ CLEAN rideData object — no extra keys inside GeoJSON
-  const rideData = {
-    pickupLocation: {
-      type: 'Point',
-      coordinates: [currentLocation.longitude, currentLocation.latitude] as [number, number],
-      address: currentLocation.address || "Current Location"
-    },
-    dropoffLocation: {
-      type: 'Point',
-      coordinates: [destination.longitude, destination.latitude] as [number, number],
-      address: destination.address || searchText || "Selected Destination"
-    },
-    fare: estimatedFare,
-    distance,
-    duration: Math.ceil(distance / 1000 * 3),
-    paymentMethod: 'cash',
-    status: 'pending',
-  };
-
-
-
-  console.log("Creating ride with:", JSON.stringify(rideData, null, 2));
-
-    // 🛰️ Send to backend
-    const rideResponse = await rideAPI.createRide(rideData);
-
-    if (!rideResponse || !rideResponse.id) {
-      throw new Error('Ride creation failed: no ride ID returned.');
-    }
-
-    console.log('✅ Ride created:', rideResponse.id);
-
-    // Set booking details for the modal
-    setBookingDetails({
-      rideId: rideResponse.id,
-      pickupAddress: currentLocation.address || "Current Location",
-      destinationAddress: destination.address || searchText,
-      fare: estimatedFare,
-      distance: distance,
-      estimatedTime: Math.ceil(distance / 1000 * 3)
+    // Navigate to booking page with location data
+    router.push({
+      pathname: '/booking',
+      params: {
+        pickupLat: currentLocation.latitude,
+        pickupLng: currentLocation.longitude,
+        pickupAddress: currentLocation.address || "Current Location",
+        destLat: destination.latitude,
+        destLng: destination.longitude,
+        destAddress: destination.address || searchText || "Selected Destination",
+        distance: distance,
+        fare: estimatedFare,
+        timestamp: new Date().toISOString()
+      }
     });
 
-    // Show the waiting modal
-    setShowWaitingModal(true);
-
   } catch (error) {
-    console.error('❌ Booking error:', error);
+    console.error('❌ Location selection error:', error);
     Alert.alert(
-      'Booking Error',
+      'Error',
       error instanceof Error ? error.message : 'Something went wrong. Please try again.'
     );
   } finally {
@@ -510,6 +544,23 @@ const handleChooseDestination = async () => {
     
     const fare = baseFare + (distance / 1000 * perKmRate); // Convert meters to kilometers
     return Math.max(fare, minimumFare);
+  };
+
+  const startPulseAnimation = () => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.2,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
   };
 
   const getCurrentLocation = async () => {
@@ -585,8 +636,8 @@ const handleChooseDestination = async () => {
       locationSubscription.current = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: 1000,
-          distanceInterval: 1,
+          timeInterval: 5000,
+          distanceInterval: 10,
         },
         (location) => {
           const newLocation: Location = {
@@ -599,47 +650,32 @@ const handleChooseDestination = async () => {
 
           // Only update if location is within Naga City and has good accuracy
           if (isWithinNagaCity(newLocation) && 
-              location.coords.accuracy !== null && 
-              location.coords.accuracy <= 20) { // Stricter accuracy threshold
+              location.coords.accuracy && 
+              location.coords.accuracy <= LOCATION_SETTINGS.MAX_ACCURACY_THRESHOLD) {
             setCurrentLocation(newLocation);
             setLocationAccuracy(location.coords.accuracy);
-            setLastLocationUpdate(Date.now());
-
-            // Update map region if in follow mode
-            if (navigationMode === 'follow') {
-              mapRef.current?.animateToRegion({
-                latitude: newLocation.latitude,
-                longitude: newLocation.longitude,
-                latitudeDelta: 0.005,
-                longitudeDelta: 0.005,
-              }, 1000);
-            }
           }
         }
       );
 
     } catch (error) {
       console.error('Error getting location:', error);
-      Alert.alert(
-        'Location Error',
-        'Failed to get your current location. Please check your device settings and try again.',
-        [{ text: 'OK' }]
-      );
+      Alert.alert('Error', 'Failed to get your current location. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Cleanup location subscription
   useEffect(() => {
     getCurrentLocation();
+    startPulseAnimation();
+
     return () => {
       if (locationSubscription.current) {
         locationSubscription.current.remove();
       }
     };
   }, []);
-
 
   // Add cache cleaning on component mount
   useEffect(() => {
@@ -931,14 +967,22 @@ const handleChooseDestination = async () => {
           <Marker
             coordinate={{
               latitude: currentLocation.latitude,
-              longitude: currentLocation.longitude
+              longitude: currentLocation.longitude,
             }}
-            anchor={{ x: 0.5, y: 0.5 }}
-            rotation={currentLocation.heading || 0}
+            title="Your Location"
+            description={locationAccuracy ? `Accuracy: ${Math.round(locationAccuracy)}m` : undefined}
           >
-            <View style={styles.currentLocationMarker}>
-              <Ionicons name="location" size={24} color="#0d4217" />
-            </View>
+            <Animated.View 
+              style={[
+                styles.currentLocationMarker,
+                {
+                  transform: [{ scale: pulseAnim }]
+                }
+              ]}
+            >
+              <View style={styles.markerDot} />
+              <Ionicons name="location" size={30} color="#0d4217" />
+            </Animated.View>
           </Marker>
 
           {/* Destination Marker */}
@@ -946,12 +990,12 @@ const handleChooseDestination = async () => {
             <Marker
               coordinate={{
                 latitude: destination.latitude,
-                longitude: destination.longitude
+                longitude: destination.longitude,
               }}
-              anchor={{ x: 0.5, y: 1.0 }}
+              title="Destination"
             >
               <View style={styles.destinationMarker}>
-                <Ionicons name="flag" size={24} color="#e74c3c" />
+                <Ionicons name="flag" size={30} color="#FF0000" />
               </View>
             </Marker>
           )}
@@ -1085,18 +1129,21 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   currentLocationMarker: {
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  markerDot: {
+    position: 'absolute',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#0d4217',
     borderWidth: 2,
-    borderColor: '#0d4217'
+    borderColor: '#fff',
   },
   destinationMarker: {
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 4,
-    borderWidth: 2,
-    borderColor: '#e74c3c'
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   recenterButton: {
     position: 'absolute',

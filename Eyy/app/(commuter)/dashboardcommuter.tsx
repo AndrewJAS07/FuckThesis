@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, Text, SafeAreaView, Platform, StatusBar, Image, TouchableOpacity, Alert } from 'react-native';
+import { View, StyleSheet, Text, SafeAreaView, Platform, StatusBar, Image, TouchableOpacity, Alert, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -25,6 +25,25 @@ export default function DashboardCommuter() {
     latitudeDelta: 0.0922,
     longitudeDelta: 0.0421,
   });
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const locationSubscription = useRef<Location.LocationSubscription | null>(null);
+
+  const startPulseAnimation = () => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.2,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  };
 
   const getCurrentLocation = async () => {
     try {
@@ -56,6 +75,28 @@ export default function DashboardCommuter() {
       setRegion(newRegion);
       
       mapRef.current?.animateToRegion(newRegion, 1000);
+
+      // Start watching location
+      if (locationSubscription.current) {
+        locationSubscription.current.remove();
+      }
+
+      locationSubscription.current = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5000,
+          distanceInterval: 10,
+        },
+        (location) => {
+          const newLocation = {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          };
+          setCurrentLocation(newLocation);
+          setLocationAccuracy(location.coords.accuracy);
+        }
+      );
+
     } catch (error) {
       console.error('Error getting location:', error);
       Alert.alert('Error', 'Failed to get your current location. Please try again.');
@@ -66,6 +107,13 @@ export default function DashboardCommuter() {
 
   useEffect(() => {
     getCurrentLocation();
+    startPulseAnimation();
+
+    return () => {
+      if (locationSubscription.current) {
+        locationSubscription.current.remove();
+      }
+    };
   }, []);
 
   return (
@@ -100,9 +148,17 @@ export default function DashboardCommuter() {
             title="Your Location"
             description={locationAccuracy ? `Accuracy: ${Math.round(locationAccuracy)}m` : undefined}
           >
-            <View style={styles.currentLocationMarker}>
+            <Animated.View 
+              style={[
+                styles.currentLocationMarker,
+                {
+                  transform: [{ scale: pulseAnim }]
+                }
+              ]}
+            >
+              <View style={styles.markerDot} />
               <Ionicons name="location" size={30} color="#0d4217" />
-            </View>
+            </Animated.View>
           </Marker>
         </MapView>
 
@@ -165,6 +221,15 @@ const styles = StyleSheet.create({
   currentLocationMarker: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  markerDot: {
+    position: 'absolute',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#0d4217',
+    borderWidth: 2,
+    borderColor: '#fff',
   },
   recenterButton: {
     position: 'absolute',

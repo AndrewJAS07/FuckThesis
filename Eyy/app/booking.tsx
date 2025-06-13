@@ -38,54 +38,66 @@ const BookingScreen: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Parse the parameters from the location screen
-    const pickupLat = parseFloat(params.pickupLat as string);
-    const pickupLng = parseFloat(params.pickupLng as string);
-    const destLat = parseFloat(params.destLat as string);
-    const destLng = parseFloat(params.destLng as string);
-    const distance = parseFloat(params.distance as string);
-    const fare = parseFloat(params.fare as string);
+    const initializeBooking = async () => {
+      try {
+        // Parse the parameters from the location screen
+        const pickupLat = parseFloat(params.pickupLat as string);
+        const pickupLng = parseFloat(params.pickupLng as string);
+        const destLat = parseFloat(params.destLat as string);
+        const destLng = parseFloat(params.destLng as string);
+        const distance = parseFloat(params.distance as string);
+        const fare = parseFloat(params.fare as string);
 
-    if (isNaN(pickupLat) || isNaN(pickupLng) || isNaN(destLat) || isNaN(destLng) || isNaN(distance) || isNaN(fare)) {
-      setError('Invalid booking data');
-      setIsLoading(false);
-      return;
-    }
+        if (isNaN(pickupLat) || isNaN(pickupLng) || isNaN(destLat) || isNaN(destLng) || isNaN(distance) || isNaN(fare)) {
+          setError('Invalid booking data');
+          setIsLoading(false);
+          return;
+        }
 
-    const data: BookingData = {
-      pickup: {
-        latitude: pickupLat,
-        longitude: pickupLng,
-        address: params.pickupAddress as string || 'Current Location'
-      },
-      destination: {
-        latitude: destLat,
-        longitude: destLng,
-        address: params.destAddress as string || 'Selected Destination'
-      },
-      timestamp: params.timestamp as string || new Date().toISOString(),
-      status: 'pending',
-      estimatedFare: fare,
-      distance: distance
+        const data: BookingData = {
+          pickup: {
+            latitude: pickupLat,
+            longitude: pickupLng,
+            address: params.pickupAddress as string || 'Current Location'
+          },
+          destination: {
+            latitude: destLat,
+            longitude: destLng,
+            address: params.destAddress as string || 'Selected Destination'
+          },
+          timestamp: params.timestamp as string || new Date().toISOString(),
+          status: 'pending',
+          estimatedFare: fare,
+          distance: distance
+        };
+
+        setBookingData(data);
+        
+        // Set initial map region to show both pickup and destination
+        const centerLat = (data.pickup.latitude + data.destination.latitude) / 2;
+        const centerLon = (data.pickup.longitude + data.destination.longitude) / 2;
+        setRegion({
+          latitude: centerLat,
+          longitude: centerLon,
+          latitudeDelta: Math.abs(data.pickup.latitude - data.destination.latitude) * 1.5,
+          longitudeDelta: Math.abs(data.pickup.longitude - data.destination.longitude) * 1.5,
+        });
+
+        // Create ride in backend
+        await createRide(data);
+      } catch (err) {
+        console.error('Error initializing booking:', err);
+        setError('Failed to initialize booking. Please try again.');
+        setIsLoading(false);
+      }
     };
 
-    setBookingData(data);
-    
-    // Set initial map region to show both pickup and destination
-    const centerLat = (data.pickup.latitude + data.destination.latitude) / 2;
-    const centerLon = (data.pickup.longitude + data.destination.longitude) / 2;
-    setRegion({
-      latitude: centerLat,
-      longitude: centerLon,
-      latitudeDelta: Math.abs(data.pickup.latitude - data.destination.latitude) * 1.5,
-      longitudeDelta: Math.abs(data.pickup.longitude - data.destination.longitude) * 1.5,
-    });
-
-    // Create ride in backend
-    createRide(data);
-  }, [params]);
+    initializeBooking();
+  }, []); // Empty dependency array since we only want this to run once
 
   const createRide = async (data: BookingData) => {
+    if (!data) return;
+    
     try {
       setIsLoading(true);
       const response = await rideAPI.createRide({
@@ -105,8 +117,13 @@ const BookingScreen: React.FC = () => {
         paymentMethod: 'cash',
         status: 'pending'
       });
-      setRideId(response.id);
-      setError(null);
+      
+      if (response && response.id) {
+        setRideId(response.id);
+        setError(null);
+      } else {
+        throw new Error('Invalid response from server');
+      }
     } catch (err) {
       console.error('Error creating ride:', err);
       setError('Failed to create ride. Please try again.');
@@ -118,36 +135,52 @@ const BookingScreen: React.FC = () => {
 
   // Poll for ride status updates
   useEffect(() => {
-    if (!rideId) return;
-
-    const pollInterval = setInterval(async () => {
-      try {
-        const ride = await rideAPI.getRideById(rideId);
-        if (ride.status === 'accepted') {
-          // Navigate to ride in progress screen
-          router.replace({
-            pathname: '/(commuter)/ride',
-            params: { rideId }
-          });
-        } else if (ride.status === 'cancelled') {
-          Alert.alert('Ride Cancelled', 'The ride has been cancelled.');
-          router.back();
+    let pollInterval: NodeJS.Timeout;
+    
+    if (rideId) {
+      pollInterval = setInterval(async () => {
+        try {
+          const ride = await rideAPI.getRideById(rideId);
+          if (ride.status === 'accepted') {
+            clearInterval(pollInterval);
+            router.replace({
+              pathname: '/(commuter)/ride',
+              params: { rideId }
+            });
+          } else if (ride.status === 'cancelled') {
+            clearInterval(pollInterval);
+            Alert.alert('Ride Cancelled', 'The ride has been cancelled.');
+            router.back();
+          }
+        } catch (err) {
+          console.error('Error polling ride status:', err);
         }
-      } catch (err) {
-        console.error('Error polling ride status:', err);
-      }
-    }, 5000); // Poll every 5 seconds
+      }, 5000);
+    }
 
-    return () => clearInterval(pollInterval);
+    return () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+    };
   }, [rideId]);
 
+  // Timer effect
   useEffect(() => {
-    const timer = setInterval(() => {
-      setElapsedTime(prev => prev + 1);
-    }, 1000);
+    let timer: NodeJS.Timeout;
+    
+    if (!isLoading && !error) {
+      timer = setInterval(() => {
+        setElapsedTime(prev => prev + 1);
+      }, 1000);
+    }
 
-    return () => clearInterval(timer);
-  }, []);
+    return () => {
+      if (timer) {
+        clearInterval(timer);
+      }
+    };
+  }, [isLoading, error]);
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);

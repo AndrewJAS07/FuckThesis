@@ -165,29 +165,23 @@ const rideAPI = {
     status: string;
   }) => {
     try {
-      // Add necessary fields for driver visibility
-      const enhancedRideData = {
+      // Simplified ride data without socket-dependent fields
+      const simplifiedRideData = {
         ...rideData,
         status: 'pending',
         isActive: true,
-        isVisibleToDrivers: true,
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        // Add fields that help with driver matching
-        pickupTime: new Date().toISOString(),
-        estimatedArrivalTime: new Date(Date.now() + rideData.duration * 60 * 1000).toISOString(),
-        // Add fields for driver notification
-        notifyDrivers: true,
-        driverNotificationSent: false
+        updatedAt: new Date().toISOString()
       };
 
-      const response = await api.post('/api/rides', enhancedRideData, {
+      const response = await api.post('/api/rides', simplifiedRideData, {
         headers: {
           'Content-Type': 'application/json',
           'X-Ride-Type': 'commuter-request',
-          'X-Notify-Driver': 'true'
+          'X-Skip-Socket': 'true',
+          'X-No-Socket': 'true'
         },
-        timeout: 10000
+        timeout: 15000 // Increased timeout
       });
 
       if (!response.data || !response.data.id) {
@@ -202,13 +196,12 @@ const rideAPI = {
         message: error.message
       });
 
-      // If the first attempt fails, try with minimal data
+      // If the first attempt fails, try with absolute minimal data
       try {
         const minimalRideData = {
-          ...rideData,
+          pickupLocation: rideData.pickupLocation,
+          dropoffLocation: rideData.dropoffLocation,
           status: 'pending',
-          isActive: true,
-          isVisibleToDrivers: true,
           createdAt: new Date().toISOString()
         };
 
@@ -216,9 +209,11 @@ const rideAPI = {
           headers: {
             'Content-Type': 'application/json',
             'X-Ride-Type': 'commuter-request',
-            'X-Minimal-Data': 'true'
+            'X-Minimal-Data': 'true',
+            'X-Skip-Socket': 'true',
+            'X-No-Socket': 'true'
           },
-          timeout: 10000
+          timeout: 15000
         });
 
         if (!retryResponse.data || !retryResponse.data.id) {
