@@ -10,7 +10,7 @@ export default function HistoryCommuter() {
       <View style={styles.header}>
         <View style={styles.logo}>
           <Image 
-            source={require('../assets/images/eyytrike1.png')}
+            source={require('../../assets/images/eyytrike1.png')}
             style={styles.logoImage}
             resizeMode="contain"
           />
@@ -25,19 +25,6 @@ export default function HistoryCommuter() {
           <Text style={styles.noRidesText}>You didn't take a ride yet!</Text>
         </View>
       </ScrollView>
-
-      {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
-        <Link href="/dashboardrcommuter" style={[styles.navItem, styles.inactiveNavItem]}>
-          <Ionicons name="home" size={24} color="#004D00" style={styles.inactiveIcon} />
-        </Link>
-        <Link href="/historycommuter" style={styles.navItem}>
-          <Ionicons name="time" size={24} color="#004D00" />
-        </Link>
-        <Link href="/profilecommuter" style={[styles.navItem, styles.inactiveNavItem]}>
-          <Ionicons name="person" size={24} color="#004D00" style={styles.inactiveIcon} />
-        </Link>
-      </View>
     </SafeAreaView>
   );
 }

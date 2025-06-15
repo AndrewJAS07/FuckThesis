@@ -12,7 +12,7 @@ export default function ProfileRider() {
       <View style={styles.header}>
         <View style={styles.logo}>
           <Image 
-            source={require('../assets/images/eyytrike1.png')}
+            source={require('../../assets/images/eyytrike1.png')}
             style={styles.logoImage}
             resizeMode="contain"
           />
@@ -62,19 +62,6 @@ export default function ProfileRider() {
             <Text style={styles.statsLabel}>Cancel{'\n'}Ride</Text>
           </View>
         </View>
-      </View>
-
-      {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
-        <Link href="/dashboardrider" style={[styles.navItem, styles.inactiveNavItem]}>
-          <Ionicons name="home" size={24} color="#004D00" style={styles.inactiveIcon} />
-        </Link>
-        <Link href="/historyrider" style={[styles.navItem, styles.inactiveNavItem]}>
-          <Ionicons name="time" size={24} color="#004D00" style={styles.inactiveIcon} />
-        </Link>
-        <Link href="/profilerider" style={styles.navItem}>
-          <Ionicons name="person" size={24} color="#004D00" />
-        </Link>
       </View>
     </SafeAreaView>
   );

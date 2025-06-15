@@ -4,8 +4,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Link, useRouter, useLocalSearchParams } from 'expo-router';
 import MapView, { Marker, PROVIDER_GOOGLE, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
 import * as Location from 'expo-location';
-import { PathFinder, Point } from '../utils/pathfinding';
-import { rideAPI } from '../lib/api';
+import { PathFinder, Point } from '../../utils/pathfinding';
+import { rideAPI } from '../../lib/api';
 import { MaterialIcons } from '@expo/vector-icons';
 
 interface Location extends Point {

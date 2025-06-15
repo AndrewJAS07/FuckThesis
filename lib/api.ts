@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Use the user's local IP address as the primary server URL.
 // Fallback to Constants.expoConfig?.extra?.serverUrl if the IP is not available (less likely).
-const USER_LOCAL_IP = 'http://192.168.37.80:3000';
+const USER_LOCAL_IP = process.env.VITE_PROCESS_URL || 'http://192.168.197.80:3000'; // Replace with your local IP address
 const API_URL = USER_LOCAL_IP || Constants.expoConfig?.extra?.serverUrl;
 
 // Ensure API_URL is set, otherwise throw an error

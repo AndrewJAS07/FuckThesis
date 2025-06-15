@@ -42,30 +42,6 @@ export default function CommuterLayout() {
           tabBarShowLabel: false,
         }}
       />
-      <Tabs.Screen
-        name="booking"
-        options={{
-          href: null, // Disable the default settings tab
-        }}
-      />
-      <Tabs.Screen
-        name="menu"
-        options={{
-          href: null, // Disable the default settings tab
-        }}
-      />
-      <Tabs.Screen
-        name="location"
-        options={{
-          href: null, // Disable the default settings tab
-        }}
-      />
-      <Tabs.Screen
-        name="track"
-        options={{
-          href: null, // Disable the default settings tab
-        }}
-      />
     </Tabs>
   );
-}
+} 

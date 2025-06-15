@@ -65,7 +65,7 @@ export default function OtpCommuterScreen() {
       {/* Logo */}
       <View style={styles.logoContainer}>
         <Image 
-          source={require('../assets/images/eyytrike2.png')}
+          source={require('../../assets/images/eyytrike2.png')}
           style={styles.logoImage}
           resizeMode="contain"
         />

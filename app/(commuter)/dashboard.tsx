@@ -63,7 +63,7 @@ export default function DashboardCommuter() {
       setIsLoading(false);
     }
   };
-
+  
   useEffect(() => {
     getCurrentLocation();
   }, []);
@@ -118,7 +118,8 @@ export default function DashboardCommuter() {
       {/* Book Button */}
       <TouchableOpacity 
         style={styles.bookButton}
-        onPress={() => router.push('/bookingcommuter')}
+        onPress={() => router.push('/(commuter)/booking')}
+        disabled={isLoading}
       >
         <Text style={styles.bookButtonText}>Book eyytrike</Text>
       </TouchableOpacity>

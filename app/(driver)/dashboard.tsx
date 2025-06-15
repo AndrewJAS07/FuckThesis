@@ -16,7 +16,7 @@ export default function dashboardRider() {
       <View style={styles.header}>
         <View style={styles.logo}>
           <Image 
-            source={require('../assets/images/eyytrike1.png')}
+            source={require('../../assets/images/eyytrike1.png')}
             style={styles.logoImage}
             resizeMode="contain"
           />
@@ -38,23 +38,10 @@ export default function dashboardRider() {
       {/* Main Content */}
       <View style={styles.content}>
         <Image 
-          source={require('../assets/images/naga-map.png')}
+          source={require('../../assets/images/naga-map.png')}
           style={styles.mapImage}
           resizeMode="cover"
         />
-      </View>
-
-      {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
-        <Link href="/dashboardrider" style={styles.navItem}>
-          <Ionicons name="home" size={24} color="#004D00" />
-        </Link>
-        <Link href="/historyrider" style={[styles.navItem, styles.inactiveNavItem]}>
-          <Ionicons name="time" size={24} color="#004D00" style={styles.inactiveIcon} />
-        </Link>
-        <Link href="/profilerider" style={[styles.navItem, styles.inactiveNavItem]}>
-          <Ionicons name="person" size={24} color="#004D00" style={styles.inactiveIcon} />
-        </Link>
       </View>
     </SafeAreaView>
   );

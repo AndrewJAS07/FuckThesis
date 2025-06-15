@@ -1,30 +1,26 @@
-import { StyleSheet, Text, View, TouchableOpacity, Image } from 'react-native';
-import { Link } from 'expo-router';
+// app/index.js
+import { useEffect } from 'react';
+import { View, Image, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
 
-export default function Page() {
+export default function SplashScreen() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      router.replace('/(auth)/login');
+    }, 3000);
+
+    return () => clearTimeout(timeout);
+  }, []);
+
   return (
     <View style={styles.container}>
-      <View style={styles.logoContainer}>
-        <Image 
-          source={require('../assets/images/eyytrike1.png')}
-          style={styles.logoImage}
-          resizeMode="contain"
-        />
-      </View>
-      
-      <View style={styles.buttonContainer}>
-        <Link href="/logincommuter" asChild>
-          <TouchableOpacity style={styles.button}>
-            <Text style={styles.buttonText}>Commuter</Text>
-          </TouchableOpacity>
-        </Link>
-
-        <Link href="/loginrider" asChild>
-          <TouchableOpacity style={styles.button}>
-            <Text style={styles.buttonText}>Rider</Text>
-          </TouchableOpacity>
-        </Link>
-      </View>
+      <Image
+        source={require('../assets/images/eyytrike1.png')} // ✅ Replace with your actual logo path
+        style={styles.logo}
+        resizeMode="contain"
+      />
     </View>
   );
 }
@@ -32,35 +28,12 @@ export default function Page() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0d4217', // Dark green background
+    backgroundColor: '#004D00',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
   },
-  logoContainer: {
-    marginBottom: 50,
-    alignItems: 'center',
-  },
-  logoImage: {
-    width: 350,
-    height: 140,
-  },
-  buttonContainer: {
-    width: '100%',
-    gap: 20,
-  },
-  button: {
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: '#FFD700',
-    borderRadius: 10,
-    padding: 15,
-    width: '100%',
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: '#FFD700',
-    fontSize: 18,
-    fontWeight: '600',
+  logo: {
+    width: 200,
+    height: 200,
   },
 });

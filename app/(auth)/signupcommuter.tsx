@@ -2,9 +2,9 @@ import { StyleSheet, Text, View, TextInput, TouchableOpacity, Image, ScrollView,
 import { useRouter } from 'expo-router';
 import { AntDesign } from '@expo/vector-icons';
 import { useState } from 'react';
-import { authAPI, UserData } from '../lib/api';
+import { authAPI, UserData } from '../../lib/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from '../lib/api'; // Import the default export (axios instance)
+import api from '../../lib/api'; // Import the default export (axios instance)
 
 export default function CommuterSignUpScreen() {
   const router = useRouter();

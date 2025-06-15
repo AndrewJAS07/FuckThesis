@@ -113,7 +113,7 @@ const BookingScreen: React.FC = () => {
         const ride = await rideAPI.getRideById(rideId);
         if (ride.status === 'accepted') {
           clearInterval(poll);
-          router.replace({ pathname: '/(commuter)/track', params: { rideId } });
+          router.replace({ pathname: '/(commuter)/ride', params: { rideId } });
         } else if (ride.status === 'cancelled') {
           clearInterval(poll);
           Alert.alert('Ride Cancelled', 'The ride has been cancelled.');
