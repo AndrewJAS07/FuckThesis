@@ -40,51 +40,104 @@ const BookingScreen: React.FC = () => {
   useEffect(() => {
     const initializeBooking = async () => {
       try {
-        // Parse the parameters from the location screen
-        const pickupLat = parseFloat(params.pickupLat as string);
-        const pickupLng = parseFloat(params.pickupLng as string);
-        const destLat = parseFloat(params.destLat as string);
-        const destLng = parseFloat(params.destLng as string);
-        const distance = parseFloat(params.distance as string);
-        const fare = parseFloat(params.fare as string);
-
-        if (isNaN(pickupLat) || isNaN(pickupLng) || isNaN(destLat) || isNaN(destLng) || isNaN(distance) || isNaN(fare)) {
-          setError('Invalid booking data');
-          setIsLoading(false);
-          return;
-        }
-
-        const data: BookingData = {
-          pickup: {
-            latitude: pickupLat,
-            longitude: pickupLng,
-            address: params.pickupAddress as string || 'Current Location'
-          },
-          destination: {
-            latitude: destLat,
-            longitude: destLng,
-            address: params.destAddress as string || 'Selected Destination'
-          },
-          timestamp: params.timestamp as string || new Date().toISOString(),
-          status: 'pending',
-          estimatedFare: fare,
-          distance: distance
-        };
-
-        setBookingData(data);
+        // Check if we have a rideId from the location screen
+        const rideId = params.rideId as string;
         
-        // Set initial map region to show both pickup and destination
-        const centerLat = (data.pickup.latitude + data.destination.latitude) / 2;
-        const centerLon = (data.pickup.longitude + data.destination.longitude) / 2;
-        setRegion({
-          latitude: centerLat,
-          longitude: centerLon,
-          latitudeDelta: Math.abs(data.pickup.latitude - data.destination.latitude) * 1.5,
-          longitudeDelta: Math.abs(data.pickup.longitude - data.destination.longitude) * 1.5,
-        });
+        if (rideId) {
+          // Ride already created, just set the rideId and fetch ride details
+          setRideId(rideId);
+          
+          // Parse the parameters from the location screen
+          const pickupLat = parseFloat(params.pickupLat as string);
+          const pickupLng = parseFloat(params.pickupLng as string);
+          const destLat = parseFloat(params.destLat as string);
+          const destLng = parseFloat(params.destLng as string);
+          const distance = parseFloat(params.distance as string);
+          const fare = parseFloat(params.fare as string);
 
-        // Create ride in backend
-        await createRide(data);
+          if (isNaN(pickupLat) || isNaN(pickupLng) || isNaN(destLat) || isNaN(destLng) || isNaN(distance) || isNaN(fare)) {
+            setError('Invalid booking data');
+            setIsLoading(false);
+            return;
+          }
+
+          const data: BookingData = {
+            pickup: {
+              latitude: pickupLat,
+              longitude: pickupLng,
+              address: params.pickupAddress as string || 'Current Location'
+            },
+            destination: {
+              latitude: destLat,
+              longitude: destLng,
+              address: params.destAddress as string || 'Selected Destination'
+            },
+            timestamp: params.timestamp as string || new Date().toISOString(),
+            status: 'pending',
+            estimatedFare: fare,
+            distance: distance
+          };
+
+          setBookingData(data);
+          
+          // Set initial map region to show both pickup and destination
+          const centerLat = (data.pickup.latitude + data.destination.latitude) / 2;
+          const centerLon = (data.pickup.longitude + data.destination.longitude) / 2;
+          setRegion({
+            latitude: centerLat,
+            longitude: centerLon,
+            latitudeDelta: Math.abs(data.pickup.latitude - data.destination.latitude) * 1.5,
+            longitudeDelta: Math.abs(data.pickup.longitude - data.destination.longitude) * 1.5,
+          });
+          
+          setIsLoading(false);
+        } else {
+          // Fallback: Create ride if no rideId provided (for backward compatibility)
+          const pickupLat = parseFloat(params.pickupLat as string);
+          const pickupLng = parseFloat(params.pickupLng as string);
+          const destLat = parseFloat(params.destLat as string);
+          const destLng = parseFloat(params.destLng as string);
+          const distance = parseFloat(params.distance as string);
+          const fare = parseFloat(params.fare as string);
+
+          if (isNaN(pickupLat) || isNaN(pickupLng) || isNaN(destLat) || isNaN(destLng) || isNaN(distance) || isNaN(fare)) {
+            setError('Invalid booking data');
+            setIsLoading(false);
+            return;
+          }
+
+          const data: BookingData = {
+            pickup: {
+              latitude: pickupLat,
+              longitude: pickupLng,
+              address: params.pickupAddress as string || 'Current Location'
+            },
+            destination: {
+              latitude: destLat,
+              longitude: destLng,
+              address: params.destAddress as string || 'Selected Destination'
+            },
+            timestamp: params.timestamp as string || new Date().toISOString(),
+            status: 'pending',
+            estimatedFare: fare,
+            distance: distance
+          };
+
+          setBookingData(data);
+          
+          // Set initial map region to show both pickup and destination
+          const centerLat = (data.pickup.latitude + data.destination.latitude) / 2;
+          const centerLon = (data.pickup.longitude + data.destination.longitude) / 2;
+          setRegion({
+            latitude: centerLat,
+            longitude: centerLon,
+            latitudeDelta: Math.abs(data.pickup.latitude - data.destination.latitude) * 1.5,
+            longitudeDelta: Math.abs(data.pickup.longitude - data.destination.longitude) * 1.5,
+          });
+
+          // Create ride in backend (fallback)
+          await createRide(data);
+        }
       } catch (err) {
         console.error('Error initializing booking:', err);
         setError('Failed to initialize booking. Please try again.');
@@ -114,7 +167,7 @@ const BookingScreen: React.FC = () => {
         fare: data.estimatedFare,
         distance: data.distance,
         duration: Math.ceil(data.distance / 1000 * 3), // Rough estimate: 3 minutes per km
-        paymentMethod: 'cash',
+        paymentMethod: (params.paymentMethod as string) || 'cash',
         status: 'pending'
       });
       

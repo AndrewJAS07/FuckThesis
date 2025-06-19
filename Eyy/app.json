@@ -14,20 +14,44 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.eyytrike",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "This app needs access to location to provide navigation and location-based services.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs access to location to provide navigation and location-based services."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#0B4619"
       },
-      "package": "com.anonymous.eyytrike"
+      "package": "com.anonymous.eyytrike",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "YOUR_ANDROID_GOOGLE_MAPS_API_KEY"
+        }
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow EyyTrike to use your location to provide navigation and location-based services."
+        }
+      ]
+    ],
     "extra": {
       "serverUrl": "http://localhost:3000",
-      "apiUrl": "http://localhost:3000/api"
+      "apiUrl": "http://localhost:3000/api",
+      "googleMapsApiKey": "YOUR_GOOGLE_MAPS_API_KEY"
     }
   }
 }

@@ -201,6 +201,10 @@ const rideAPI = {
         const minimalRideData = {
           pickupLocation: rideData.pickupLocation,
           dropoffLocation: rideData.dropoffLocation,
+          fare: rideData.fare || 15, // Default fare
+          distance: rideData.distance || 1000, // Default distance in meters
+          duration: rideData.duration || 300, // Default duration in seconds (5 minutes)
+          paymentMethod: rideData.paymentMethod || 'cash', // Default payment method
           status: 'pending',
           createdAt: new Date().toISOString()
         };
